@@ -15,13 +15,7 @@ import { LanguageSwitcher } from '@/components/LanguageSwitcher';
 import { useTranslation } from 'react-i18next';
 import i18n from '@/i18n';
 import { jsPDF } from 'jspdf';
-import 'jspdf-autotable';
-
-declare module 'jspdf' {
-  interface jsPDF {
-    autoTable: any;
-  }
-}
+import autoTable from 'jspdf-autotable';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
@@ -230,22 +224,40 @@ const sanitizeText = (text: any): string => {
     return 'N/A';
   }
 
-  let cleaned = String(text)
-    .trim()
-    // Remove control characters
+  let cleaned = String(text).trim();
+
+  // Decode common HTML entities FIRST
+  cleaned = cleaned
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
+
+  // Remove HTML tags SECOND
+  cleaned = cleaned.replace(/<[^>]*>?/gm, '');
+
+  // Remove specific artifacts reported by user
+  cleaned = cleaned
+    .replace(/& p/g, '')
+    .replace(/&p/g, '')
+    .replace(/& P/g, '')
+    .replace(/&P/g, '');
+
+  // Remove control characters and specific corrupt sequences
+  cleaned = cleaned
     .replace(/[\x00-\x1F\x7F-\x9F]/g, '')
-    // Remove corrupt character sequences
     .replace(/[&þ✓§†‡°¡¿]/g, '')
-    // Remove multiple spaces
-    .replace(/\s+/g, ' ')
-    // Fix common encoding issues
+    .replace(/\u0026/g, '') // Explicitly remove &
+    .replace(/\s+/g, ' ') // Collapse spaces
     .replace(/â€"/g, '"')
     .replace(/â€˜/g, "'")
     .replace(/â€™/g, "'")
     .replace(/â€œ/g, '"')
     .replace(/â€/g, '');
 
-  return cleaned;
+  return cleaned.trim();
 };
 
 const colors = {
@@ -274,27 +286,28 @@ const addHeader = (doc: jsPDF, pageWidth: number) => {
 
   doc.setFontSize(20);
   doc.setTextColor(colors.dark[0], colors.dark[1], colors.dark[2]);
-  doc.setFont(undefined, 'bold');
+  doc.setFont('helvetica', 'bold');
   doc.text('ASSESSMENT REPORT', 15, 18);
 
   doc.setFontSize(8);
   doc.setTextColor(colors.textLight[0], colors.textLight[1], colors.textLight[2]);
-  doc.setFont(undefined, 'normal');
+  doc.setFont('helvetica', 'normal');
   doc.text('Generated: ' + new Date().toLocaleString('en-US'), pageWidth - 15, 18, { align: 'right' });
 };
 
-const addSectionHeader = (doc: jsPDF, title: string, yPos: number, pageWidth: number): number => {
+const addSectionHeader = (doc: jsPDF, title: string, yPos: number, pageWidth: number, contentMargin: number = 15): number => {
+  const contentWidth = pageWidth - (contentMargin * 2);
   doc.setFillColor(colors.primary[0], colors.primary[1], colors.primary[2]);
-  doc.rect(15, yPos, pageWidth - 30, 7, 'F');
+  doc.rect(contentMargin, yPos, contentWidth, 7, 'F');
 
   doc.setDrawColor(colors.border[0], colors.border[1], colors.border[2]);
   doc.setLineWidth(0.5);
-  doc.rect(15, yPos, pageWidth - 30, 7);
+  doc.rect(contentMargin, yPos, contentWidth, 7);
 
   doc.setFontSize(10);
   doc.setTextColor(colors.dark[0], colors.dark[1], colors.dark[2]);
-  doc.setFont(undefined, 'bold');
-  doc.text(title, 18, yPos + 4.5);
+  doc.setFont('helvetica', 'bold');
+  doc.text(title, contentMargin + 3, yPos + 4.5);
 
   return yPos + 10;
 };
@@ -311,12 +324,12 @@ const addInfoBox = (
 
   doc.setFontSize(7);
   doc.setTextColor(colors.textLight[0], colors.textLight[1], colors.textLight[2]);
-  doc.setFont(undefined, 'normal');
+  doc.setFont('helvetica', 'normal');
   doc.text(label, xPos, yPos);
 
   doc.setFontSize(9);
   doc.setTextColor(colors.text[0], colors.text[1], colors.text[2]);
-  doc.setFont(undefined, 'bold');
+  doc.setFont('helvetica', 'bold');
 
   const lines = doc.splitTextToSize(cleanValue, width - 4);
   lines.slice(0, 1).forEach((line: string, idx: number) => {
@@ -346,6 +359,33 @@ export const generateAssessmentReportPDF = async (
     return sanitizeText(str);
   };
 
+  const formatAnswerForReport = (rawAnswer: any) => {
+    if (rawAnswer === null || rawAnswer === undefined) return 'No answer provided';
+
+    // Get a raw text candidate to inspect
+    const rawText = typeof rawAnswer === 'string' ? rawAnswer : (rawAnswer?.content ?? rawAnswer?.fileName ?? rawAnswer?.url ?? '');
+
+    // File attachment -> show filename
+    if (typeof rawAnswer === 'object' && rawAnswer?.fileName) return `File: ${cleanString(rawAnswer.fileName)}`;
+
+    // Video responses -> indicate video
+    if (typeof rawAnswer === 'object' && rawAnswer?.type === 'video') return rawAnswer?.fileName ? `Video: ${cleanString(rawAnswer.fileName)}` : 'Video response';
+
+    // Detect code-like answers (multiple lines and presence of code tokens)
+    const lines = String(rawText).split(/\r?\n/).map((l:any) => l.trim()).filter((l:any) => l.length > 0);
+    const codeLike = lines.length > 1 && lines.slice(0, 10).some((l:any) => /(\bfunction\b|=>|console\.|import\s|class\s|{|}|;)/.test(l));
+    if (codeLike) {
+      const snippet = lines.slice(0, 6).map((l:any) => cleanString(l)).join('\n');
+      return `Code snippet (truncated):\n${snippet}\n...`;
+    }
+
+    // Normal text: clean and truncate if long
+    const cleaned = cleanString(rawText);
+    if (!cleaned || cleaned === '') return 'No answer provided';
+    if (cleaned.length > 400) return cleaned.slice(0, 400) + '... (truncated)';
+    return cleaned;
+  };
+
   return {
     jobTitle: cleanString(jobTitle),
     applicantName: cleanString(applicant.full_name),
@@ -364,21 +404,43 @@ export const generateAssessmentReportPDF = async (
     feedback: cleanString(submission.feedback_text),
     caseStudyTitle: cleanString(submission.case_study_title),
     avg_ai_probability: submission.avg_ai_probability,
-    questionsAnswers: submission.questions?.map((q: string, idx: number) => {
-      const rawAnswer = submission.answers?.[idx];
-      const answerContent = typeof rawAnswer === 'string' ? cleanString(rawAnswer) : (rawAnswer?.content ? cleanString(rawAnswer.content) : 'No answer provided');
-      const submissionType = typeof rawAnswer === 'string' ? 'Text' : (rawAnswer?.type === 'file' ? 'File' : 'Text');
 
-      return {
-        question: cleanString(q),
-        answer: answerContent,
-        submissionType: submissionType,
-        score: submission.question_scores?.[idx]?.score || 'N/A',
-        feedback: cleanString(submission.question_scores?.[idx]?.feedback),
-        ai_suspected: submission.question_scores?.[idx]?.ai_suspected || false,
-        ai_probability: submission.question_scores?.[idx]?.ai_probability || 0
-      };
-    }) || [],
+
+    questionsAnswers: (submission.custom_question_scores && submission.custom_question_scores.length > 0)
+      ? submission.custom_question_scores.map((cq: any) => {
+          // Try to find the module answer in submission.custom_answers by question_id
+          const moduleAnswer = submission.custom_answers?.find((a: any) => a.question_id === cq.question_id);
+          const rawAnswer = moduleAnswer?.answer;
+          const formatted = formatAnswerForReport(rawAnswer);
+          const submissionType = typeof rawAnswer === 'string'
+            ? 'Text'
+            : (rawAnswer?.type === 'file' ? 'File' : (rawAnswer?.type === 'video' ? 'Video' : 'Text'));
+
+          return {
+            question: cleanString(`Module: ${cq.question_type} (ID:${cq.question_id})`),
+            answer: formatted,
+            submissionType: submissionType,
+            score: cq.score || 'N/A',
+            feedback: cleanString(cq.feedback),
+            ai_suspected: cq.ai_suspected || false,
+            ai_probability: cq.ai_probability || 0
+          };
+        })
+      : (submission.questions?.map((q: string, idx: number) => {
+        const rawAnswer = submission.answers?.[idx];
+        const formatted = formatAnswerForReport(rawAnswer);
+        const submissionType = typeof rawAnswer === 'string' ? 'Text' : (rawAnswer?.type === 'file' ? 'File' : 'Text');
+
+        return {
+          question: cleanString(q),
+          answer: formatted,
+          submissionType: submissionType,
+          score: submission.question_scores?.[idx]?.score || 'N/A',
+          feedback: cleanString(submission.question_scores?.[idx]?.feedback),
+          ai_suspected: submission.question_scores?.[idx]?.ai_suspected || false,
+          ai_probability: submission.question_scores?.[idx]?.ai_probability || 0
+        };
+      }) || []),
     skills: submission.skill_scores?.map((skill: any) => ({
       skill_name: cleanString(skill.skill_name),
       score: skill.score,
@@ -400,7 +462,11 @@ export const downloadAssessmentReportPDF = (
 
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
-  let yPos = 32;
+  const contentMargin = 15;
+  const contentWidth = pageWidth - (contentMargin * 2);
+
+  // Helper to track Y position
+  let finalY = 32;
 
   // Header
   addHeader(doc, pageWidth);
@@ -408,273 +474,320 @@ export const downloadAssessmentReportPDF = (
   // Position Title
   doc.setFontSize(11);
   doc.setTextColor(colors.dark[0], colors.dark[1], colors.dark[2]);
-  doc.setFont(undefined, 'bold');
-  const positionLines = doc.splitTextToSize('Position: ' + sanitizeText(reportData.jobTitle), pageWidth - 30);
-  positionLines.forEach((line: string) => {
-    doc.text(line, 15, yPos);
-    yPos += 4;
-  });
-  yPos += 3;
+  doc.setFont('helvetica', 'bold');
+  doc.text('Position: ' + sanitizeText(reportData.jobTitle), contentMargin + 2, finalY);
+  finalY += 8;
 
   // APPLICANT INFORMATION
-  yPos = addSectionHeader(doc, 'APPLICANT INFORMATION', yPos, pageWidth);
+  autoTable(doc, {
+    startY: finalY,
+    head: [['APPLICANT INFORMATION', '']],
+    body: [
+      [`Full Name:\n${sanitizeText(reportData.applicantName)}`, `Email:\n${sanitizeText(reportData.applicantEmail)}`],
+      [`Phone:\n${sanitizeText(reportData.applicantPhone)}`, `Previous Job Title:\n${sanitizeText(reportData.applicantJobTitle)}`],
+      [`Applied Date:\n${sanitizeText(reportData.appliedDate)}`, `Current Status:\n${sanitizeText(reportData.applicationStatus)}`],
+    ],
+    theme: 'grid',
+    headStyles: {
+      fillColor: colors.primary,
+      textColor: colors.dark,
+      fontSize: 10,
+      fontStyle: 'bold',
+      font: 'helvetica',
+      halign: 'left'
+    },
+    bodyStyles: {
+      fillColor: colors.lightBg,
+      textColor: colors.text,
+      fontSize: 8,
+      cellPadding: 4,
+      font: 'helvetica',
+      lineColor: colors.border,
+      lineWidth: 0.1
+    },
+    columnStyles: {
+      0: { cellWidth: contentWidth / 2 },
+      1: { cellWidth: contentWidth / 2 }
+    },
+    margin: { left: contentMargin, right: contentMargin },
+    didParseCell: (data: any) => {
+      // Merge header cells
+      if (data.section === 'head') {
+        if (data.column.index === 0) {
+          data.cell.colSpan = 2;
+          data.cell.styles.halign = 'left';
+        }
+      }
+    }
+  });
 
-  doc.setFillColor(colors.lightBg[0], colors.lightBg[1], colors.lightBg[2]);
-  doc.rect(15, yPos, pageWidth - 30, 28, 'F');
-  doc.setDrawColor(colors.border[0], colors.border[1], colors.border[2]);
-  doc.setLineWidth(0.3);
-  doc.rect(15, yPos, pageWidth - 30, 28);
+  finalY = (doc as any).lastAutoTable.finalY + 10;
 
-  const colWidth = (pageWidth - 30) / 2;
+  // ASSESSMENT RESULTS - Score Box (Manual for custom look)
+  // Check space for score box
+  if (finalY + 35 > pageHeight) {
+    doc.addPage();
+    finalY = 15;
+  }
 
-  addInfoBox(doc, 'Full Name:', reportData.applicantName, yPos + 3, 18, colWidth - 3);
-  addInfoBox(doc, 'Email:', reportData.applicantEmail, yPos + 3, 18 + colWidth, colWidth - 3);
-
-  addInfoBox(doc, 'Phone:', reportData.applicantPhone, yPos + 11, 18, colWidth - 3);
-  addInfoBox(doc, 'Previous Job Title:', reportData.applicantJobTitle, yPos + 11, 18 + colWidth, colWidth - 3);
-
-  addInfoBox(doc, 'Applied Date:', reportData.appliedDate, yPos + 19, 18, colWidth - 3);
-  addInfoBox(doc, 'Current Status:', reportData.applicationStatus, yPos + 19, 18 + colWidth, colWidth - 3);
-
-  yPos += 32;
-  yPos = checkPageBreak(doc, yPos, 50);
-
-  // ASSESSMENT RESULTS
-  yPos = addSectionHeader(doc, 'ASSESSMENT RESULTS', yPos, pageWidth);
+  // Section Header
+  doc.setFillColor(colors.primary[0], colors.primary[1], colors.primary[2]);
+  doc.rect(contentMargin, finalY, pageWidth - (contentMargin * 2), 7, 'F');
+  doc.setFontSize(10);
+  doc.setTextColor(colors.dark[0], colors.dark[1], colors.dark[2]);
+  doc.setFont('helvetica', 'bold');
+  doc.text('ASSESSMENT RESULTS', contentMargin + 3, finalY + 4.5);
+  finalY += 7;
 
   // Score Box
   doc.setFillColor(colors.lightBg[0], colors.lightBg[1], colors.lightBg[2]);
-  doc.rect(15, yPos, pageWidth - 30, 22, 'F');
   doc.setDrawColor(colors.border[0], colors.border[1], colors.border[2]);
-  doc.setLineWidth(0.5);
-  doc.rect(15, yPos, pageWidth - 30, 22);
+  doc.setLineWidth(0.1);
+  doc.rect(contentMargin, finalY, pageWidth - (contentMargin * 2), 22, 'FD');
 
   doc.setFontSize(26);
   doc.setTextColor(colors.dark[0], colors.dark[1], colors.dark[2]);
-  doc.setFont(undefined, 'bold');
-  doc.text(Math.round(reportData.assessmentScore).toString(), 20, yPos + 13);
+  doc.setFont('helvetica', 'bold');
+  doc.text(Math.round(reportData.assessmentScore).toString(), contentMargin + 5, finalY + 13);
 
   doc.setFontSize(8);
   doc.setTextColor(colors.textLight[0], colors.textLight[1], colors.textLight[2]);
-  doc.setFont(undefined, 'normal');
-  doc.text('/100', 32, yPos + 13);
-
+  doc.setFont('helvetica', 'normal');
+  doc.text('/100', contentMargin + 16, finalY + 13);
   doc.setFontSize(7);
-  doc.text('Overall Score', 20, yPos + 18);
+  doc.text('Overall Score', contentMargin + 5, finalY + 18);
 
   const scoreColor = getScoreColor(reportData.assessmentScore);
   doc.setFontSize(10);
   doc.setTextColor(scoreColor[0], scoreColor[1], scoreColor[2]);
-  doc.setFont(undefined, 'bold');
-  doc.text(reportData.assessmentRating, pageWidth - 20, yPos + 13, { align: 'right' });
-
+  doc.setFont('helvetica', 'bold');
+  doc.text(reportData.assessmentRating, pageWidth - contentMargin - 5, finalY + 13, { align: 'right' });
   doc.setFontSize(7);
   doc.setTextColor(colors.textLight[0], colors.textLight[1], colors.textLight[2]);
-  doc.setFont(undefined, 'normal');
-  doc.text('Rating', pageWidth - 20, yPos + 18, { align: 'right' });
+  doc.setFont('helvetica', 'normal');
+  doc.text('Rating', pageWidth - contentMargin - 5, finalY + 18, { align: 'right' });
 
-  yPos += 26;
-  yPos = checkPageBreak(doc, yPos, 30);
+  finalY += 25;
 
-  // Results Details
-  doc.setFillColor(colors.lightBg[0], colors.lightBg[1], colors.lightBg[2]);
-  doc.rect(15, yPos, pageWidth - 30, 18, 'F');
-  doc.setDrawColor(colors.border[0], colors.border[1], colors.border[2]);
-  doc.setLineWidth(0.3);
-  doc.rect(15, yPos, pageWidth - 30, 18);
+  // Results Details Table
+  autoTable(doc, {
+    startY: finalY,
+    body: [
+      [`CV Match Score:\n${reportData.cvMatchScore !== null ? reportData.cvMatchScore + '%' : 'N/A'}`, `CV Match Level:\n${reportData.cvMatchLevel || 'N/A'}`],
+      [`Final Recommendation:\n${sanitizeText(reportData.finalRecommendation)}`, `AI Detection:\n${reportData.aiDetected ? 'Yes' : 'No'}`],
+      reportData.avg_ai_probability !== undefined ? [`Average AI Probability:\n${reportData.aiDetected ? ((parseFloat(String(reportData.avg_ai_probability)) || 0).toFixed(1) + '%') : 'No AI detected'}`, ''] : []
+    ].filter(row => row.length > 0),
+    theme: 'grid',
+    bodyStyles: {
+      fillColor: colors.lightBg,
+      textColor: colors.text,
+      fontSize: 8,
+      cellPadding: 4,
+      font: 'helvetica',
+      lineColor: colors.border,
+      lineWidth: 0.1
+    },
+    columnStyles: {
+      0: { cellWidth: contentWidth / 2 },
+      1: { cellWidth: contentWidth / 2 }
+    },
+    margin: { left: contentMargin, right: contentMargin },
+  });
 
-  addInfoBox(doc, 'CV Match Score:', reportData.cvMatchScore !== null ? reportData.cvMatchScore + '%' : 'N/A', yPos + 3, 18, colWidth - 3);
-  addInfoBox(doc, 'CV Match Level:', reportData.cvMatchLevel || 'N/A', yPos + 3, 18 + colWidth, colWidth - 3);
-
-  addInfoBox(doc, 'Final Recommendation:', reportData.finalRecommendation, yPos + 9, 18, colWidth - 3);
-  addInfoBox(doc, 'AI Detection:', reportData.aiDetected ? 'Yes' : 'No', yPos + 9, 18 + colWidth, colWidth - 3);
-
-  if (reportData.avg_ai_probability !== undefined) {
-    doc.setFontSize(7);
-    doc.setTextColor(colors.textLight[0], colors.textLight[1], colors.textLight[2]);
-    doc.setFont(undefined, 'normal');
-    doc.text('Average AI Probability:', 18, yPos + 15);
-
-    doc.setFontSize(8);
-    doc.setTextColor(colors.text[0], colors.text[1], colors.text[2]);
-    doc.setFont(undefined, 'bold');
-    doc.text((parseFloat(String(reportData.avg_ai_probability)) || 0).toFixed(1) + '%', 18, yPos + 19);
-  }
-
-  yPos += 22;
-  yPos = checkPageBreak(doc, yPos, 35);
+  finalY = (doc as any).lastAutoTable.finalY + 10;
 
   // RECRUITER FEEDBACK
-  yPos = addSectionHeader(doc, 'RECRUITER FEEDBACK', yPos, pageWidth);
-
-  doc.setFillColor(colors.lightBg[0], colors.lightBg[1], colors.lightBg[2]);
-  doc.setDrawColor(colors.border[0], colors.border[1], colors.border[2]);
-  doc.setLineWidth(0.3);
-
-  const feedbackLines = doc.splitTextToSize(sanitizeText(reportData.feedback), pageWidth - 40);
-  const feedbackHeight = feedbackLines.length * 3.5 + 6;
-
-  doc.rect(15, yPos, pageWidth - 30, feedbackHeight, 'F');
-  doc.rect(15, yPos, pageWidth - 30, feedbackHeight);
-
-  doc.setFontSize(8);
-  doc.setTextColor(colors.text[0], colors.text[1], colors.text[2]);
-  doc.setFont(undefined, 'normal');
-
-  feedbackLines.forEach((line: string, idx: number) => {
-    doc.text(line, 18, yPos + 4 + idx * 3.5);
+  autoTable(doc, {
+    startY: finalY,
+    head: [['RECRUITER FEEDBACK']],
+    body: [[sanitizeText(reportData.feedback)]],
+    theme: 'grid',
+    headStyles: {
+      fillColor: colors.primary,
+      textColor: colors.dark,
+      fontSize: 10,
+      fontStyle: 'bold',
+      font: 'helvetica',
+      halign: 'left'
+    },
+    bodyStyles: {
+      fillColor: colors.lightBg,
+      textColor: colors.text,
+      fontSize: 8,
+      cellPadding: 4,
+      font: 'helvetica',
+      lineColor: colors.border,
+      lineWidth: 0.1,
+      overflow: 'linebreak'
+    },
+    columnStyles: {
+      0: { cellWidth: contentWidth }
+    },
+    margin: { left: contentMargin, right: contentMargin },
   });
 
-  yPos += feedbackHeight + 3;
-  yPos = checkPageBreak(doc, yPos, 30);
+  finalY = (doc as any).lastAutoTable.finalY + 10;
 
   // CASE STUDY
-  yPos = addSectionHeader(doc, 'CASE STUDY', yPos, pageWidth);
-
-  doc.setFillColor(colors.lightBg[0], colors.lightBg[1], colors.lightBg[2]);
-  doc.rect(15, yPos, pageWidth - 30, 8, 'F');
-  doc.setDrawColor(colors.border[0], colors.border[1], colors.border[2]);
-  doc.setLineWidth(0.3);
-  doc.rect(15, yPos, pageWidth - 30, 8);
-
-  doc.setFontSize(7);
-  doc.setTextColor(colors.textLight[0], colors.textLight[1], colors.textLight[2]);
-  doc.setFont(undefined, 'normal');
-  doc.text('Title:', 18, yPos + 2);
-
-  doc.setFontSize(8);
-  doc.setTextColor(colors.text[0], colors.text[1], colors.text[2]);
-  doc.setFont(undefined, 'bold');
-  const caseTitleLines = doc.splitTextToSize(sanitizeText(reportData.caseStudyTitle), pageWidth - 45);
-  doc.text(caseTitleLines[0] || 'N/A', 30, yPos + 2);
-
-  yPos += 11;
-  yPos = checkPageBreak(doc, yPos, 40);
-
-  // QUESTIONS & ANSWERS
-  yPos = addSectionHeader(doc, 'QUESTIONS & ANSWERS WITH AI ANALYSIS', yPos, pageWidth);
-
-  reportData.questionsAnswers.forEach((qa, idx) => {
-    yPos = checkPageBreak(doc, yPos, 60);
-
-    // Question Box
-    const qBoxColor = qa.ai_suspected ? [254, 243, 242] as [number, number, number] : colors.lightBg;
-    doc.setFillColor(qBoxColor[0], qBoxColor[1], qBoxColor[2]);
-    doc.rect(15, yPos, pageWidth - 30, 6, 'F');
-    doc.setDrawColor(colors.border[0], colors.border[1], colors.border[2]);
-    doc.setLineWidth(0.3);
-    doc.rect(15, yPos, pageWidth - 30, 6);
-
-    doc.setFontSize(8);
-    doc.setTextColor(colors.dark[0], colors.dark[1], colors.dark[2]);
-    doc.setFont(undefined, 'bold');
-    doc.text('Question ' + (idx + 1), 18, yPos + 4);
-
-    if (qa.ai_suspected) {
-      doc.setFontSize(7);
-      doc.setTextColor(colors.error[0], colors.error[1], colors.error[2]);
-      doc.setFont(undefined, 'bold');
-      doc.text('⚠ AI Detected', pageWidth - 22, yPos + 4, { align: 'right' });
-    }
-
-    yPos += 8;
-
-    // Question Text
-    const questionLines = doc.splitTextToSize('Q: ' + sanitizeText(qa.question), pageWidth - 40);
-    doc.setFontSize(7);
-    doc.setTextColor(colors.text[0], colors.text[1], colors.text[2]);
-    doc.setFont(undefined, 'italic');
-    questionLines.forEach((line: string) => {
-      yPos = checkPageBreak(doc, yPos, 20);
-      doc.text(line, 18, yPos);
-      yPos += 3;
-    });
-
-    yPos += 2;
-
-    // Answer Text
-    const answerLines = doc.splitTextToSize('A: ' + sanitizeText(qa.answer), pageWidth - 40);
-    doc.setFontSize(7);
-    doc.setTextColor(colors.text[0], colors.text[1], colors.text[2]);
-    doc.setFont(undefined, 'normal');
-    answerLines.forEach((line: string) => {
-      yPos = checkPageBreak(doc, yPos, 15);
-      doc.text(line, 18, yPos);
-      yPos += 3;
-    });
-
-    yPos += 2;
-
-    // Score and Metadata
-    doc.setFillColor(colors.lightBg[0], colors.lightBg[1], colors.lightBg[2]);
-    doc.rect(15, yPos, pageWidth - 30, 10, 'F');
-    doc.setDrawColor(colors.border[0], colors.border[1], colors.border[2]);
-    doc.setLineWidth(0.3);
-    doc.rect(15, yPos, pageWidth - 30, 10);
-
-    doc.setFontSize(7);
-    doc.setTextColor(colors.textLight[0], colors.textLight[1], colors.textLight[2]);
-    doc.setFont(undefined, 'normal');
-    doc.text('Score: ' + qa.score + '/100', 18, yPos + 2);
-    doc.text('Submission Type: ' + qa.submissionType, 18, yPos + 4);
-    doc.text('AI Probability: ' + (parseFloat(String(qa.ai_probability)) || 0).toFixed(1) + '%', 18, yPos + 6);
-
-    yPos += 12;
-
-    // Feedback
-    doc.setFillColor(colors.lightBg[0], colors.lightBg[1], colors.lightBg[2]);
-    const fbLines = doc.splitTextToSize('Feedback: ' + sanitizeText(qa.feedback), pageWidth - 40);
-    const fbHeight = fbLines.length * 3 + 4;
-
-    doc.rect(15, yPos, pageWidth - 30, fbHeight, 'F');
-    doc.setDrawColor(colors.border[0], colors.border[1], colors.border[2]);
-    doc.setLineWidth(0.3);
-    doc.rect(15, yPos, pageWidth - 30, fbHeight);
-
-    doc.setFontSize(7);
-    doc.setTextColor(colors.text[0], colors.text[1], colors.text[2]);
-    doc.setFont(undefined, 'normal');
-    fbLines.slice(0, 3).forEach((line: string, i: number) => {
-      doc.text(line, 18, yPos + 2 + i * 3);
-    });
-
-    yPos += fbHeight + 3;
+  autoTable(doc, {
+    startY: finalY,
+    head: [['CASE STUDY']],
+    body: [[`Title: ${sanitizeText(reportData.caseStudyTitle)}`]],
+    theme: 'grid',
+    headStyles: {
+      fillColor: colors.primary,
+      textColor: colors.dark,
+      fontSize: 10,
+      fontStyle: 'bold',
+      font: 'helvetica',
+      halign: 'left'
+    },
+    bodyStyles: {
+      fillColor: colors.lightBg,
+      textColor: colors.text,
+      fontSize: 8,
+      cellPadding: 4,
+      font: 'helvetica',
+      lineColor: colors.border,
+      lineWidth: 0.1,
+      fontStyle: 'bold',
+      overflow: 'linebreak'
+    },
+    columnStyles: {
+      0: { cellWidth: contentWidth }
+    },
+    margin: { left: contentMargin, right: contentMargin },
   });
 
-  yPos = checkPageBreak(doc, yPos, 40);
+  finalY = (doc as any).lastAutoTable.finalY + 10;
+
+  // QUESTIONS & ANSWERS
+  // We'll use a single table for all Q&A to handle paging gracefully
+  const qaRows: any[] = [];
+
+  reportData.questionsAnswers.forEach((qa, idx) => {
+    // Header Row for Question
+    qaRows.push([{
+      content: `Question ${idx + 1}${qa.ai_suspected ? '   [AI Detected]' : ''}`,
+      colSpan: 1,
+      styles: {
+        fillColor: qa.ai_suspected ? [254, 243, 242] : colors.lightBg,
+        textColor: qa.ai_suspected ? colors.error : colors.dark,
+        fontStyle: 'bold'
+      }
+    }]);
+
+    // Question Text
+    qaRows.push([{
+      content: `Q: ${sanitizeText(qa.question)}`,
+      styles: { fontStyle: 'italic', textColor: colors.text }
+    }]);
+
+    // Answer Text
+    qaRows.push([{
+      // qa.answer is already cleaned & truncated by formatAnswerForReport (preserves snippets with newlines)
+      content: `A: ${qa.answer}`,
+      styles: { fontStyle: 'normal', textColor: colors.text }
+    }]);
+
+    // Metadata
+    const aiProbText = qa.ai_suspected ? `${(parseFloat(String(qa.ai_probability)) || 0).toFixed(1)}%` : 'No AI detected';
+    qaRows.push([{
+      content: `Score: ${qa.score}/100 | Submission Type: ${qa.submissionType} | AI Probability: ${aiProbText}`,
+      styles: { fontSize: 7, textColor: colors.textLight }
+    }]);
+
+    // Feedback
+    qaRows.push([{
+      content: `Feedback: ${sanitizeText(qa.feedback)}`,
+      styles: { textColor: colors.text, fillColor: colors.lightBg }
+    }]);
+
+    // Spacer row (empty)
+    qaRows.push([{ content: '', styles: { cellPadding: 1, fillColor: [255, 255, 255], lineColor: [255, 255, 255] } }]);
+  });
+
+  autoTable(doc, {
+    startY: finalY,
+    head: [['QUESTIONS & ANSWERS WITH AI ANALYSIS']],
+    body: qaRows,
+    theme: 'grid',
+    headStyles: {
+      fillColor: colors.primary,
+      textColor: colors.dark,
+      fontSize: 10,
+      fontStyle: 'bold',
+      font: 'helvetica',
+      halign: 'left'
+    },
+    bodyStyles: {
+      fillColor: [255, 255, 255],
+      textColor: colors.text,
+      fontSize: 8,
+      cellPadding: 3,
+      font: 'helvetica',
+      fontStyle: 'normal',
+      lineColor: colors.border,
+      lineWidth: 0.1,
+      overflow: 'linebreak'
+    },
+    columnStyles: {
+      0: { cellWidth: contentWidth }
+    },
+    margin: { left: contentMargin, right: contentMargin },
+    // Custom styling for specific rows is handled in the body data structure
+  });
+
+  finalY = (doc as any).lastAutoTable.finalY + 10;
 
   // SKILLS EVALUATION
   if (reportData.skills && reportData.skills.length > 0) {
-    yPos = addSectionHeader(doc, 'SKILLS EVALUATION', yPos, pageWidth);
+    const skillRows = reportData.skills.map(skill => {
+      const score = skill.score || 0;
+      // We can't easily do colorful text in one cell with autoTable without hooks, 
+      // so we'll just show the text.
+      return [
+        sanitizeText(skill.skill_name),
+        `${score}/10`,
+        `${skill.category || ''} | ${skill.is_required ? 'Required' : 'Optional'}`
+      ];
+    });
 
-    reportData.skills.forEach((skill) => {
-      yPos = checkPageBreak(doc, yPos, 10);
-
-      doc.setFillColor(colors.lightBg[0], colors.lightBg[1], colors.lightBg[2]);
-      doc.rect(15, yPos, pageWidth - 30, 8, 'F');
-      doc.setDrawColor(colors.border[0], colors.border[1], colors.border[2]);
-      doc.setLineWidth(0.3);
-      doc.rect(15, yPos, pageWidth - 30, 8);
-
-      doc.setFontSize(8);
-      doc.setTextColor(colors.dark[0], colors.dark[1], colors.dark[2]);
-      doc.setFont(undefined, 'bold');
-      doc.text(sanitizeText(skill.skill_name), 18, yPos + 3);
-
-      const skillScore = skill.score || 0;
-      const skillColor = skillScore >= 7 ? colors.success : skillScore >= 5 ? colors.warning : colors.error;
-
-      doc.setFontSize(7);
-      doc.setTextColor(skillColor[0], skillColor[1], skillColor[2]);
-      doc.setFont(undefined, 'bold');
-      doc.text(skillScore + '/10', pageWidth - 20, yPos + 3, { align: 'right' });
-
-      doc.setFontSize(6);
-      doc.setTextColor(colors.textLight[0], colors.textLight[1], colors.textLight[2]);
-      doc.setFont(undefined, 'normal');
-      doc.text((skill.category || '') + ' | ' + (skill.is_required ? 'Required' : 'Optional'), 18, yPos + 6);
-
-      yPos += 10;
+    autoTable(doc, {
+      startY: finalY,
+      head: [['SKILLS EVALUATION', 'Score', 'Category']],
+      body: skillRows,
+      theme: 'grid',
+      headStyles: {
+        fillColor: colors.primary,
+        textColor: colors.dark,
+        fontSize: 10,
+        fontStyle: 'bold',
+        font: 'helvetica',
+        halign: 'left'
+      },
+      bodyStyles: {
+        fillColor: colors.lightBg,
+        textColor: colors.text,
+        fontSize: 8,
+        cellPadding: 3,
+        font: 'helvetica',
+        lineColor: colors.border,
+        lineWidth: 0.1
+      },
+      columnStyles: {
+        0: { cellWidth: (contentWidth * 0.5) },
+        1: { cellWidth: (contentWidth * 0.15), halign: 'right', fontStyle: 'bold' },
+        2: { cellWidth: (contentWidth * 0.35), fontSize: 7, textColor: colors.textLight }
+      },
+      margin: { left: contentMargin, right: contentMargin },
+      didParseCell: (data: any) => {
+        if (data.section === 'head' && data.column.index === 0) {
+          // Header spans are tricky in autoTable if not defined in 'head' array correctly
+          // But here we have 3 columns defined in body, so we need 3 columns in head or span them.
+          // Let's just keep 3 columns.
+        }
+      }
     });
   }
 
@@ -684,6 +797,7 @@ export const downloadAssessmentReportPDF = (
     doc.setPage(i);
     doc.setFontSize(7);
     doc.setTextColor(colors.textLight[0], colors.textLight[1], colors.textLight[2]);
+    doc.setFont('helvetica', 'normal');
     doc.text(
       'Page ' + i + ' of ' + totalPages,
       pageWidth / 2,
@@ -702,7 +816,7 @@ export const downloadAssessmentReportPDF = (
 // TopBar Component
 function TopBar() {
   const { t } = useTranslation();
-  
+
   return (
     <header className="h-14 md:h-16 border-b border-gray-200 bg-white flex items-center justify-between px-4 md:px-6">
       <div className="flex items-center gap-2 md:gap-3">
@@ -1260,8 +1374,8 @@ export default function ViewApplicants() {
                     <button
                       onClick={handleSelectAll}
                       className={`w-full px-4 py-3 rounded-xl text-sm font-medium transition-all duration-200 flex items-center justify-center gap-2 ${selectedApplicants.length === sortedApplications.length && sortedApplications.length > 0
-                          ? 'bg-[#C8F55A] text-merit-dark hover:bg-[#b8e54a] shadow-lg shadow-[#C8F55A]/20'
-                          : 'bg-gradient-to-r from-gray-50 to-gray-100 text-gray-700 hover:from-gray-100 hover:to-[#b8e54a] border border-gray-200 hover:border-gray-300 shadow-sm'
+                        ? 'bg-[#C8F55A] text-merit-dark hover:bg-[#b8e54a] shadow-lg shadow-[#C8F55A]/20'
+                        : 'bg-gradient-to-r from-gray-50 to-gray-100 text-gray-700 hover:from-gray-100 hover:to-[#b8e54a] border border-gray-200 hover:border-gray-300 shadow-sm'
                         }`}
                     >
                       {selectedApplicants.length === sortedApplications.length && sortedApplications.length > 0 ? (
@@ -1327,7 +1441,15 @@ export default function ViewApplicants() {
 
                         {/* Applicant Name and Title */}
                         <div className="flex-1 min-w-0">
-                          <h3 className="text-lg font-semibold text-merit-dark truncate">{app.full_name}</h3>
+                          <div className="flex items-center gap-2">
+                            <h3 className="text-lg font-semibold text-merit-dark truncate">{app.full_name}</h3>
+                            {app.status === 'shortlisted' && (
+                              <span className="px-2 py-0.5 text-xs font-semibold bg-merit-green text-black rounded-full flex items-center gap-1 flex-shrink-0">
+                                <Star className="w-3 h-3" fill="currentColor" />
+                                Shortlisted
+                              </span>
+                            )}
+                          </div>
                           <p className="text-sm text-gray-600 truncate">{app.last_job_title}</p>
                         </div>
 
@@ -1381,6 +1503,11 @@ export default function ViewApplicants() {
                                     <span className={`text-xs px-2 py-1 rounded-full font-semibold ${getCaseStudyColor(caseStudyScore)}`}>
                                       {submission?.rating || 'Unrated'}
                                     </span>
+                                    {submission ? (
+                                      <span className="text-xs text-gray-500">
+                                        {submission.ai_detected && submission.avg_ai_probability > 0 ? `${typeof submission.avg_ai_probability === 'number' ? submission.avg_ai_probability.toFixed(1) : parseFloat(String(submission.avg_ai_probability || 0)).toFixed(1)}% AI` : 'No AI detected'}
+                                      </span>
+                                    ) : null}
                                     {submission?.ai_detected && (
                                       <span className="text-xs px-2 py-1 rounded-full font-semibold bg-red-100 text-red-700 border-red-300 flex items-center gap-1">
                                         <AlertTriangle className="w-3 h-3" />
@@ -1547,8 +1674,8 @@ export default function ViewApplicants() {
                               updateStatus(app.id, 'shortlisted');
                             }}
                             className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${app.status === 'shortlisted'
-                                ? 'bg-[#C8F55A] text-merit-dark hover:bg-[#b8e54a]'
-                                : 'border border-gray-300 text-merit-dark hover:bg-gray-50'
+                              ? 'bg-[#C8F55A] text-merit-dark hover:bg-[#b8e54a]'
+                              : 'border border-gray-300 text-merit-dark hover:bg-gray-50'
                               }`}
                           >
                             <Star className="w-5 h-5" strokeWidth={2} />
@@ -1667,8 +1794,8 @@ export default function ViewApplicants() {
                 <div className="w-full bg-gray-200 rounded-full h-4 mt-4">
                   <div
                     className={`h-4 rounded-full transition-all duration-500 ${selectedCVMatch.overall_match_score >= 80 ? 'bg-green-500' :
-                        selectedCVMatch.overall_match_score >= 60 ? 'bg-blue-500' :
-                          selectedCVMatch.overall_match_score >= 40 ? 'bg-yellow-500' : 'bg-red-500'
+                      selectedCVMatch.overall_match_score >= 60 ? 'bg-blue-500' :
+                        selectedCVMatch.overall_match_score >= 40 ? 'bg-yellow-500' : 'bg-red-500'
                       }`}
                     style={{ width: `${selectedCVMatch.overall_match_score}%` }}
                   ></div>

@@ -11,7 +11,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Bell, History, ArrowLeft, Trash2, CheckCircle2, Share2, Edit3, Save, Download } from "lucide-react";
+import { Bell, History, ArrowLeft, Trash2, CheckCircle2, Share2, Edit3, Save, Download, Check, Code, Video, FileText, Calculator, Database, PenTool, Brain, MessageSquare } from "lucide-react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { useTranslation } from 'react-i18next';
@@ -549,6 +549,11 @@ export default function DashboardCasesPreview() {
                                   {i18n.language === 'ar' ? "مختارة للنشر" : "Selected for Publish"}
                                 </span>
                               )}
+                              {caseStudy.customQuestions && caseStudy.customQuestions.length > 0 && (
+                                <span className="inline-block text-xs font-semibold bg-purple-100 text-purple-700 rounded px-2 py-1 mb-2 ml-2">
+                                  📝 {caseStudy.customQuestions.length} {i18n.language === 'ar' ? 'تقييم' : 'assessments'}
+                                </span>
+                              )}
                               <h2 className="text-xl font-bold text-gray-900">{caseStudy.title}</h2>
                             </div>
                           </div>
@@ -597,26 +602,36 @@ export default function DashboardCasesPreview() {
                         )}
 
                         {/* Questions Section */}
-                        {caseStudy.questions && caseStudy.questions.length > 0 && (
-                          <div>
-                            <h3 className="text-lg font-bold text-gray-900 mb-4">
-                              {i18n.language === 'ar' ? "الأسئلة:" : "Questions:"}
-                            </h3>
-                            <div className="space-y-4">
-                              {caseStudy.questions.map((q, i) => (
-                                <div key={i} className="bg-gray-50 p-4 rounded-lg border border-gray-200">
-                                  <div className="flex gap-3">
-                                    <span className="flex-shrink-0 w-6 h-6 bg-merit-green text-merit-dark rounded-full flex items-center justify-center text-xs font-bold">
-                                      {i + 1}
-                                    </span>
-                                    <p className="text-gray-700 leading-relaxed flex-1 whitespace-pre-wrap break-words">
-                                      {q}
-                                    </p>
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
+                        {caseStudy.customQuestions && caseStudy.customQuestions.length > 0 ? (
+                          <div className="mb-6 p-4 rounded-xl bg-gray-50 border border-gray-200">
+                            <p className="text-sm text-gray-700">
+                              {i18n.language === 'ar'
+                                ? 'توجد وحدات تقييم متقدمة لهذه الدراسة. تم عرض وحدات التقييم أدناه (الوحدات هي المصدر الرئيسي للأسئلة الآن).'
+                                : 'This case study includes assessment modules. Modules are shown below and act as the primary source of assessment items.'}
+                            </p>
                           </div>
+                        ) : (
+                          caseStudy.questions && caseStudy.questions.length > 0 && (
+                            <div>
+                              <h3 className="text-lg font-bold text-gray-900 mb-4">
+                                {i18n.language === 'ar' ? "الأسئلة:" : "Questions:"}
+                              </h3>
+                              <div className="space-y-4">
+                                {caseStudy.questions.map((q, i) => (
+                                  <div key={i} className="bg-gray-50 p-4 rounded-lg border border-gray-200">
+                                    <div className="flex gap-3">
+                                      <span className="flex-shrink-0 w-6 h-6 bg-merit-green text-merit-dark rounded-full flex items-center justify-center text-xs font-bold">
+                                        {i + 1}
+                                      </span>
+                                      <p className="text-gray-700 leading-relaxed flex-1 whitespace-pre-wrap break-words">
+                                        {q}
+                                      </p>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )
                         )}
 
                         {/* Tables Section */}
@@ -682,6 +697,224 @@ export default function DashboardCasesPreview() {
                                   </div>
                                 </div>
                               ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Assessment Modules Section */}
+                        {caseStudy.customQuestions && caseStudy.customQuestions.length > 0 && (
+                          <div>
+                            <h3 className="text-lg font-bold text-gray-900 mb-4">
+                              {i18n.language === 'ar' ? "وحدات التقييم:" : "Assessment Modules:"}
+                            </h3>
+                            
+                            {(() => {
+                              const questionsByType = caseStudy.customQuestions.reduce((acc, q) => {
+                                const type = q.question_type || 'other';
+                                if (!acc[type]) acc[type] = [];
+                                acc[type].push(q);
+                                return acc;
+                              }, {});
+
+                              const typeLabels = {
+                                // canonical camelCase keys
+                                mcq: { en: 'Multiple Choice', ar: 'اختيار من متعدد', icon: MessageSquare, color: 'bg-blue-100 text-blue-700 border-blue-200' },
+                                openEnded: { en: 'Open-Ended', ar: 'أسئلة مفتوحة', icon: FileText, color: 'bg-purple-100 text-purple-700 border-purple-200' },
+                                videoResponse: { en: 'Video Response', ar: 'استجابة فيديو', icon: Video, color: 'bg-pink-100 text-pink-700 border-pink-200' },
+                                codingChallenge: { en: 'Coding Challenge', ar: 'تحدي برمجي', icon: Code, color: 'bg-green-100 text-green-700 border-green-200' },
+                                sqlProblem: { en: 'SQL Problem', ar: 'مسألة SQL', icon: Database, color: 'bg-cyan-100 text-cyan-700 border-cyan-200' },
+                                excelTask: { en: 'Excel Task', ar: 'مهمة إكسل', icon: Calculator, color: 'bg-emerald-100 text-emerald-700 border-emerald-200' },
+                                writingExercise: { en: 'Writing Exercise', ar: 'تمرين كتابة', icon: PenTool, color: 'bg-amber-100 text-amber-700 border-amber-200' },
+                                situationalJudgment: { en: 'Situational Judgment', ar: 'حكم موقفي', icon: Brain, color: 'bg-indigo-100 text-indigo-700 border-indigo-200' },
+
+                                // common backend/raw variants (snake_case or short keys)
+                                'video_response': { en: 'Video Response', ar: 'استجابة فيديو', icon: Video, color: 'bg-pink-100 text-pink-700 border-pink-200' },
+                                'open_ended': { en: 'Open-Ended', ar: 'أسئلة مفتوحة', icon: FileText, color: 'bg-purple-100 text-purple-700 border-purple-200' },
+                                'coding_challenge': { en: 'Coding Challenge', ar: 'تحدي برمجي', icon: Code, color: 'bg-green-100 text-green-700 border-green-200' },
+                                'sql': { en: 'SQL Problem', ar: 'مسألة SQL', icon: Database, color: 'bg-cyan-100 text-cyan-700 border-cyan-200' },
+                                'situational_judgment': { en: 'Situational Judgment', ar: 'حكم موقفي', icon: Brain, color: 'bg-indigo-100 text-indigo-700 border-indigo-200' },
+                                'video': { en: 'Video Response', ar: 'استجابة فيديو', icon: Video, color: 'bg-pink-100 text-pink-700 border-pink-200' }
+                              };
+
+                              // Humanize fallback for unknown types
+                              function humanizeTypeLabel(type) {
+                                if (!type || typeof type !== 'string') return { en: 'Unknown', ar: 'غير معروف', icon: FileText, color: 'bg-gray-100 text-gray-700 border-gray-200' };
+                                const cleaned = type.replace(/_/g, ' ').replace(/\b\w/g, ch => ch.toUpperCase());
+                                return { en: cleaned, ar: cleaned, icon: FileText, color: 'bg-gray-100 text-gray-700 border-gray-200' };
+                              }
+
+                              return Object.entries(questionsByType).map(([type, questions]) => {
+                                const typeInfo = typeLabels[type] || humanizeTypeLabel(type);
+                                const IconComponent = typeInfo.icon;
+                                const questionsArray = questions as any[];
+
+                                return (
+                                  <div key={type} className="mb-6 border border-gray-200 rounded-xl overflow-hidden">
+                                    <div className={`flex items-center gap-3 px-4 py-3 ${typeInfo.color} border-b`}>
+                                      <IconComponent className="w-4 h-4" />
+                                      <h4 className="font-semibold text-sm">
+                                        {i18n.language === 'ar' ? typeInfo.ar : typeInfo.en}
+                                      </h4>
+                                      <span className="ml-auto text-xs font-medium bg-white/50 px-2 py-0.5 rounded-full">
+                                        {questionsArray.length}
+                                      </span>
+                                    </div>
+                                    
+                                    <div className="divide-y divide-gray-100">
+                                      {questionsArray.map((q: any, idx: number) => (
+                                        <div key={q.id || idx} className="p-4 hover:bg-gray-50">
+                                          <div className="flex items-start gap-3">
+                                            <span className="flex-shrink-0 w-6 h-6 bg-gray-200 rounded-full flex items-center justify-center text-xs font-bold text-gray-700">
+                                              {idx + 1}
+                                            </span>
+                                            <div className="flex-1 min-w-0">
+                                              <p className="text-sm text-gray-800 mb-2">
+                                                {q.question_text}
+                                              </p>
+
+                                              {/* MCQ Options */}
+                                              {type === 'mcq' && q.options && (
+                                                <div className="mt-2 space-y-1.5">
+                                                  {(Array.isArray(q.options) ? q.options : []).map((opt: any, optIdx: number) => {
+                                                    const optionText = typeof opt === 'object' 
+                                                      ? (i18n.language === 'ar' ? (opt.text_ar || opt.text_en || opt.text) : (opt.text_en || opt.text_ar || opt.text))
+                                                      : opt;
+                                                    const isCorrect = typeof opt === 'object' ? opt.is_correct : q.correct_answers?.includes(opt);
+                                                    return (
+                                                      <div
+                                                        key={optIdx}
+                                                        className={`flex items-center gap-2 px-3 py-1.5 rounded text-xs ${
+                                                          isCorrect
+                                                            ? 'bg-green-50 border border-green-200'
+                                                            : 'bg-gray-50 border border-gray-200'
+                                                        }`}
+                                                      >
+                                                        <span className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-medium ${
+                                                          isCorrect
+                                                            ? 'bg-green-500 text-white'
+                                                            : 'bg-gray-200 text-gray-600'
+                                                        }`}>
+                                                          {String.fromCharCode(65 + optIdx)}
+                                                        </span>
+                                                        <span className="text-gray-700">
+                                                          {optionText}
+                                                        </span>
+                                                        {isCorrect && (
+                                                          <Check className="w-3 h-3 text-green-600 ml-auto" />
+                                                        )}
+                                                      </div>
+                                                    );
+                                                  })}
+                                                </div>
+                                              )}
+
+                                              {/* Coding Starter Code */}
+                                              {type === 'codingChallenge' && q.starter_code && (
+                                                <div className="mt-2 bg-gray-900 text-green-400 p-3 rounded text-xs overflow-x-auto">
+                                                  <pre className="font-mono">
+                                                    {typeof q.starter_code === 'object' ? JSON.stringify(q.starter_code, null, 2) : q.starter_code}
+                                                  </pre>
+                                                </div>
+                                              )}
+
+                                              {/* Meta Info */}
+                                              <div className="mt-2 flex items-center gap-3 text-xs text-gray-500">
+                                                {q.time_limit && (
+                                                  <span>⏱️ {q.time_limit} min</span>
+                                                )}
+                                                {q.weight !== undefined && q.weight !== null && (
+                                                  <span>⚖️ {q.weight}%</span>
+                                                )}
+                                              </div>
+                                            </div>
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                );
+                              });
+                            })()}
+
+                            {/* Anti-cheating settings badge */}
+                            {caseStudy.antiCheatingSettings && (
+                              <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg">
+                                <p className="text-sm font-semibold text-red-800 mb-3 flex items-center gap-2">
+                                  🛡️ {i18n.language === 'ar' ? 'مكافحة الغش مفعلة' : 'Anti-Cheating Enabled'}
+                                </p>
+                                <div className="flex flex-wrap gap-2">
+                                  {caseStudy.antiCheatingSettings.fullscreen_required && (
+                                    <span className="bg-red-100 text-red-700 px-3 py-1 rounded-full text-xs font-medium">
+                                      {i18n.language === 'ar' ? '✓ وضع ملء الشاشة' : '✓ Fullscreen Mode'}
+                                    </span>
+                                  )}
+                                  {caseStudy.antiCheatingSettings.tab_switch_detection && (
+                                    <span className="bg-red-100 text-red-700 px-3 py-1 rounded-full text-xs font-medium">
+                                      {i18n.language === 'ar' ? '✓ كشف تبديل التبويب' : '✓ Tab Switch Detection'}
+                                    </span>
+                                  )}
+                                  {caseStudy.antiCheatingSettings.copy_paste_disabled && (
+                                    <span className="bg-red-100 text-red-700 px-3 py-1 rounded-full text-xs font-medium">
+                                      {i18n.language === 'ar' ? '✓ منع النسخ واللصق' : '✓ Block Copy/Paste'}
+                                    </span>
+                                  )}
+                                  {caseStudy.antiCheatingSettings.webcam_required && (
+                                    <span className="bg-red-100 text-red-700 px-3 py-1 rounded-full text-xs font-medium">
+                                      {i18n.language === 'ar' ? '✓ مراقبة الكاميرا' : '✓ Webcam Proctoring'}
+                                    </span>
+                                  )}
+                                  {caseStudy.antiCheatingSettings.webcam_snapshots_interval > 0 && (
+                                    <span className="bg-red-100 text-red-700 px-3 py-1 rounded-full text-xs font-medium">
+                                      {i18n.language === 'ar' 
+                                        ? `✓ لقطات دورية (${caseStudy.antiCheatingSettings.webcam_snapshots_interval}ث)` 
+                                        : `✓ Periodic Screenshots (${caseStudy.antiCheatingSettings.webcam_snapshots_interval}s)`}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Anti-Cheating Settings (independent section) */}
+                        {caseStudy.antiCheatingSettings && (!caseStudy.customQuestions || caseStudy.customQuestions.length === 0) && (
+                          <div>
+                            <h3 className="text-lg font-bold text-gray-900 mb-4">
+                              {i18n.language === 'ar' ? "إعدادات مكافحة الغش:" : "Anti-Cheating Settings:"}
+                            </h3>
+                            <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
+                              <p className="text-sm font-semibold text-red-800 mb-3 flex items-center gap-2">
+                                🛡️ {i18n.language === 'ar' ? 'مكافحة الغش مفعلة' : 'Anti-Cheating Enabled'}
+                              </p>
+                              <div className="flex flex-wrap gap-2">
+                                {caseStudy.antiCheatingSettings.fullscreen_required && (
+                                  <span className="bg-red-100 text-red-700 px-3 py-1 rounded-full text-xs font-medium">
+                                    {i18n.language === 'ar' ? '✓ وضع ملء الشاشة' : '✓ Fullscreen Mode'}
+                                  </span>
+                                )}
+                                {caseStudy.antiCheatingSettings.tab_switch_detection && (
+                                  <span className="bg-red-100 text-red-700 px-3 py-1 rounded-full text-xs font-medium">
+                                    {i18n.language === 'ar' ? '✓ كشف تبديل التبويب' : '✓ Tab Switch Detection'}
+                                  </span>
+                                )}
+                                {caseStudy.antiCheatingSettings.copy_paste_disabled && (
+                                  <span className="bg-red-100 text-red-700 px-3 py-1 rounded-full text-xs font-medium">
+                                    {i18n.language === 'ar' ? '✓ منع النسخ واللصق' : '✓ Block Copy/Paste'}
+                                  </span>
+                                )}
+                                {caseStudy.antiCheatingSettings.webcam_required && (
+                                  <span className="bg-red-100 text-red-700 px-3 py-1 rounded-full text-xs font-medium">
+                                    {i18n.language === 'ar' ? '✓ مراقبة الكاميرا' : '✓ Webcam Proctoring'}
+                                  </span>
+                                )}
+                                {caseStudy.antiCheatingSettings.webcam_snapshots_interval > 0 && (
+                                  <span className="bg-red-100 text-red-700 px-3 py-1 rounded-full text-xs font-medium">
+                                    {i18n.language === 'ar' 
+                                      ? `✓ لقطات دورية (${caseStudy.antiCheatingSettings.webcam_snapshots_interval}ث)` 
+                                      : `✓ Periodic Screenshots (${caseStudy.antiCheatingSettings.webcam_snapshots_interval}s)`}
+                                  </span>
+                                )}
+                              </div>
                             </div>
                           </div>
                         )}

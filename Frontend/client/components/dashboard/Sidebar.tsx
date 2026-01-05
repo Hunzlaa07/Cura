@@ -1,4 +1,4 @@
-import { Home, Upload, FileText, Briefcase, ClipboardCheck } from "lucide-react";
+import { Home, Upload, FileText, Briefcase, ClipboardCheck, BookOpen } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -36,6 +36,18 @@ export default function Sidebar({ activeItem = "home", className }: SidebarProps
       link: "/recruiter-dashboard/generate-case" 
     },
     { 
+      id: "cv-analyzer",
+      labelKey: "cvAnalyzer",
+      icon: FileText,
+      link: "/recruiter-dashboard/bulk-match"
+    },
+    { 
+      id: "pre-built", 
+      labelKey: "preBuiltTests", 
+      icon: BookOpen, 
+      link: "/recruiter-dashboard/pre-built-assessments" 
+    },
+    { 
       id: "case-study-assessments", 
       labelKey: "caseStudyAssessments", 
       icon: ClipboardCheck, 
@@ -63,6 +75,8 @@ export default function Sidebar({ activeItem = "home", className }: SidebarProps
       home: { en: "Home", ar: "الرئيسية" },
       createJob: { en: "Create Job", ar: "إنشاء وظيفة" },
       caseStudies: { en: "Case Studies", ar: "دراسات الحالة" },
+      cvAnalyzer: { en: "CV Analyzer", ar: "محلل السير الذاتية" },
+      preBuiltTests: { en: "Pre-Built Tests", ar: "الاختبارات الجاهزة" },
       caseStudyAssessments: { en: "Case Study Assessments", ar: "تقييمات دراسة الحالة" },
       allJobs: { en: "All Jobs", ar: "جميع الوظائف" }
     };

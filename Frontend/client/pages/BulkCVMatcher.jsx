@@ -45,7 +45,9 @@ const BulkCVMatcher = ({ activeItem = "bulk-match" }) => {
   const { toast } = useToast();
 
   const [step, setStep] = useState('upload'); // upload, processing, results
+  const [uploadMode, setUploadMode] = useState('files'); // files or link or google-drive
   const [files, setFiles] = useState([]);
+  const [link, setLink] = useState('');
   const [jd, setJd] = useState('');
   const [bulkJobId, setBulkJobId] = useState(null);
   const [results, setResults] = useState([]);
@@ -54,11 +56,21 @@ const BulkCVMatcher = ({ activeItem = "bulk-match" }) => {
   const [expandedRow, setExpandedRow] = useState(null);
   const fileInputRef = useRef(null);
   const pollingIntervalRef = useRef(null);
+  
+  // Google Drive state
+  const [googleDriveAuth, setGoogleDriveAuth] = useState(null);
+  const [googleFolders, setGoogleFolders] = useState([]);
+  const [selectedFolderId, setSelectedFolderId] = useState(null);
+  const [showFolderPicker, setShowFolderPicker] = useState(false);
+  const [loadingFolders, setLoadingFolders] = useState(false);
 
   const translations = {
     en: {
       bulkCVMatcher: "Bulk CV Matcher",
       uploadCVs: "Upload CVs",
+      uploadFromLink: "Upload from Link",
+      sourceLink: "Source link",
+      pasteLink: "Paste a public download link (Google Drive, Dropbox, or ZIP)",
       dragDrop: "Drag & drop CVs here",
       orClick: "or click to browse",
       fileTypes: "PDF, DOCX, TXT (up to 100 files)",
@@ -68,6 +80,7 @@ const BulkCVMatcher = ({ activeItem = "bulk-match" }) => {
       filesSelected: "file(s) selected",
       remove: "Remove",
       startMatching: "Start Matching",
+      startImport: "Start Import",
       processingCVs: "Processing CVs",
       analyzingCVs: "Analyzing CVs against the job description...",
       complete: "% Complete",
@@ -88,16 +101,31 @@ const BulkCVMatcher = ({ activeItem = "bulk-match" }) => {
       gaps: "Gaps",
       noFilesError: "Please upload at least one CV",
       jdError: "Job description must be at least 50 characters",
+      linkError: "Please provide a valid link",
       uploadFailed: "Upload failed",
       exportFailed: "Export failed",
       processingError: "Error processing CVs",
       matchCVs: "Match CVs Against Job Description",
       useAI: "Use AI-powered matching to analyze and rank CVs instantly",
-      cancel: "Cancel"
+      cancel: "Cancel",
+      connectGoogleDrive: "Connect to Google Drive",
+      selectFolder: "Select Folder",
+      googleDriveConnected: "Google Drive Connected",
+      disconnect: "Disconnect",
+      selectGoogleFolder: "Select a folder from your Google Drive",
+      folderSelector: "Folder Selector",
+      import: "Import",
+      noFolders: "No folders found",
+      folderNotSelected: "Please select a folder",
+      or: "or",
+      manualLink: "Paste a public download link"
     },
     ar: {
       bulkCVMatcher: "مطابق السيرة الذاتية بالجملة",
       uploadCVs: "تحميل السير الذاتية",
+      uploadFromLink: "تحميل من رابط",
+      sourceLink: "رابط المصدر",
+      pasteLink: "الصق رابط تحميل عام (Google Drive أو Dropbox أو ZIP)",
       dragDrop: "اسحب وأفلت السير الذاتية هنا",
       orClick: "أو انقر للاستعراض",
       fileTypes: "PDF و DOCX و TXT (حتى 100 ملف)",
@@ -107,6 +135,7 @@ const BulkCVMatcher = ({ activeItem = "bulk-match" }) => {
       filesSelected: "ملف(ات) محددة",
       remove: "إزالة",
       startMatching: "ابدأ المطابقة",
+      startImport: "ابدأ الاستيراد",
       processingCVs: "معالجة السير الذاتية",
       analyzingCVs: "تحليل السير الذاتية مقابل وصف الوظيفة...",
       complete: "% مكتمل",
@@ -127,17 +156,163 @@ const BulkCVMatcher = ({ activeItem = "bulk-match" }) => {
       gaps: "الفجوات",
       noFilesError: "يرجى تحميل سيرة ذاتية واحدة على الأقل",
       jdError: "يجب أن يتضمن وصف الوظيفة 50 حرف على الأقل",
+      linkError: "يرجى تقديم رابط صالح",
       uploadFailed: "فشل التحميل",
       exportFailed: "فشل التصدير",
       processingError: "خطأ في معالجة السير الذاتية",
       matchCVs: "مطابقة السير الذاتية مقابل وصف الوظيفة",
       useAI: "استخدم المطابقة المدعومة بالذكاء الاصطناعي لتحليل وترتيب السير الذاتية فوراً",
-      cancel: "إلغاء"
+      cancel: "إلغاء",
+      connectGoogleDrive: "الاتصال بـ Google Drive",
+      selectFolder: "اختر مجلد",
+      googleDriveConnected: "تم الاتصال بـ Google Drive",
+      disconnect: "قطع الاتصال",
+      selectGoogleFolder: "اختر مجلد من Google Drive",
+      folderSelector: "محدد المجلد",
+      import: "استيراد",
+      noFolders: "لم يتم العثور على مجلدات",
+      folderNotSelected: "الرجاء اختيار مجلد",
+      or: "أو",
+      manualLink: "الصق رابط تحميل عام"
     }
   };
 
   const getText = (key) => {
     return translations[i18n.language]?.[key] || translations.en[key];
+  };
+
+  // Google Drive functions
+  useEffect(() => {
+    checkGoogleDriveAuth();
+  }, []);
+
+  const checkGoogleDriveAuth = async () => {
+    try {
+      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/bulk-cv/google-auth/status`, {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        }
+      });
+      const data = await response.json();
+      setGoogleDriveAuth(data.authenticated);
+    } catch (err) {
+      console.error('Error checking Google Drive auth:', err);
+    }
+  };
+
+  const handleConnectGoogleDrive = async () => {
+    try {
+      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/bulk-cv/google-auth/url`, {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        }
+      });
+      const data = await response.json();
+      window.location.href = data.authUrl;
+    } catch (err) {
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Failed to connect to Google Drive"
+      });
+    }
+  };
+
+  const handleLoadGoogleFolders = async () => {
+    setLoadingFolders(true);
+    try {
+      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/bulk-cv/google-drive/folders`, {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        }
+      });
+      const data = await response.json();
+      setGoogleFolders(data.folders || []);
+      setShowFolderPicker(true);
+    } catch (err) {
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Failed to load Google Drive folders"
+      });
+    } finally {
+      setLoadingFolders(false);
+    }
+  };
+
+  const handleImportFromGoogleFolder = async () => {
+    if (!selectedFolderId) {
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: getText('folderNotSelected')
+      });
+      return;
+    }
+
+    if (jd.trim().length < 50) {
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: getText('jdError')
+      });
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/bulk-cv/google-drive/import-folder`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
+        body: JSON.stringify({
+          folder_id: selectedFolderId,
+          jd: jd
+        })
+      });
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({ error: 'Import failed' }));
+        throw new Error(err.error || getText('uploadFailed'));
+      }
+
+      const data = await response.json();
+      setBulkJobId(data.bulk_job_id);
+      setStep('processing');
+      setShowFolderPicker(false);
+      pollResults(data.bulk_job_id);
+
+    } catch (err) {
+      toast({
+        variant: "destructive",
+        title: getText('uploadFailed'),
+        description: err.message
+      });
+      setLoading(false);
+    }
+  };
+
+  const handleDisconnectGoogleDrive = async () => {
+    try {
+      // Could add a disconnect endpoint if needed
+      setGoogleDriveAuth(false);
+      setSelectedFolderId(null);
+      setGoogleFolders([]);
+      setShowFolderPicker(false);
+      toast({
+        title: i18n.language === 'ar' ? "تم قطع الاتصال ✓" : "Disconnected ✓",
+        description: i18n.language === 'ar' ? "تم قطع الاتصال بـ Google Drive" : "Disconnected from Google Drive"
+      });
+    } catch (err) {
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Failed to disconnect"
+      });
+    }
   };
 
   const handleFileSelect = (e) => {
@@ -234,6 +409,49 @@ const BulkCVMatcher = ({ activeItem = "bulk-match" }) => {
         title: getText('uploadFailed'),
         description: err.message,
       });
+      setLoading(false);
+    }
+  };
+
+  const handleStartFromLink = async () => {
+    if (!link) {
+      toast({ variant: "destructive", title: "Error", description: getText('linkError') });
+      return;
+    }
+
+    if (jd.trim().length < 50) {
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: getText('jdError'),
+      });
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/bulk-cv/upload-from-link`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
+        body: JSON.stringify({ jd, source_link: link })
+      });
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({ error: 'Import failed' }));
+        throw new Error(err.error || getText('uploadFailed'));
+      }
+
+      const data = await response.json();
+      setBulkJobId(data.bulk_job_id);
+      setStep('processing');
+      pollResults(data.bulk_job_id);
+
+    } catch (err) {
+      toast({ variant: "destructive", title: getText('uploadFailed'), description: err.message });
       setLoading(false);
     }
   };
@@ -341,7 +559,7 @@ const BulkCVMatcher = ({ activeItem = "bulk-match" }) => {
       <div className="min-h-screen flex flex-col" style={{ backgroundColor: '#e1e4e8' }}>
         <TopBar />
         <div className="flex flex-1">
-          <Sidebar activeItem="bulk-match" />
+          <Sidebar activeItem="cv-analyzer" />
 
           <div className="flex-1 p-4 md:p-10 overflow-y-auto">
             <div className="max-w-4xl mx-auto">
@@ -381,23 +599,142 @@ const BulkCVMatcher = ({ activeItem = "bulk-match" }) => {
                     onDragOver={handleDragOver}
                     onDragLeave={handleDragLeave}
                     onDrop={handleDrop}
-                    className="border-2 border-dashed border-gray-300 rounded-2xl p-12 text-center cursor-pointer hover:border-[#C8F55A] hover:bg-lime-50 transition-all duration-200 bg-gray-50"
-                    onClick={() => fileInputRef.current?.click()}
                   >
-                    <Upload className="mx-auto mb-4 text-gray-400" size={40} />
-                    <p className="font-semibold text-gray-700 mb-2">{getText('dragDrop')}</p>
-                    <p className="text-sm text-gray-500 mb-3">{getText('orClick')}</p>
-                    <p className="text-xs text-gray-400">{getText('fileTypes')}</p>
+                  <div className="flex items-center gap-3 mb-6 flex-wrap">
+                    <button
+                      onClick={() => setUploadMode('files')}
+                      className={`px-4 py-2 rounded-lg ${uploadMode === 'files' ? 'bg-merit-dark text-white' : 'bg-gray-100 text-merit-gray'}`}
+                    >
+                      {getText('uploadCVs')}
+                    </button>
+                    <button
+                      onClick={() => setUploadMode('link')}
+                      className={`px-4 py-2 rounded-lg ${uploadMode === 'link' ? 'bg-merit-dark text-white' : 'bg-gray-100 text-merit-gray'}`}
+                    >
+                      {getText('uploadFromLink')}
+                    </button>
+                    <button
+                      onClick={() => setUploadMode('google-drive')}
+                      className={`px-4 py-2 rounded-lg flex items-center gap-2 ${uploadMode === 'google-drive' ? 'bg-merit-dark text-white' : 'bg-gray-100 text-merit-gray'}`}
+                    >
+                      Google Drive
+                    </button>
                   </div>
 
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    multiple
-                    accept=".pdf,.docx,.txt"
-                    onChange={handleFileSelect}
-                    className="hidden"
-                  />
+                  {uploadMode === 'files' ? (
+                    <>
+                      <div className="border-2 border-dashed border-gray-300 rounded-2xl p-12 text-center cursor-pointer hover:border-[#C8F55A] hover:bg-lime-50 transition-all duration-200 bg-gray-50"
+                        onClick={() => fileInputRef.current?.click()}
+                      >
+                        <Upload className="mx-auto mb-4 text-gray-400" size={40} />
+                        <p className="font-semibold text-gray-700 mb-2">{getText('dragDrop')}</p>
+                        <p className="text-sm text-gray-500 mb-3">{getText('orClick')}</p>
+                        <p className="text-xs text-gray-400">{getText('fileTypes')}</p>
+                      </div>
+
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        multiple
+                        accept=".pdf,.docx,.txt"
+                        onChange={handleFileSelect}
+                        className="hidden"
+                      />
+                    </>
+                  ) : uploadMode === 'link' ? (
+                    <div>
+                      <label className="text-sm font-medium text-gray-700 mb-2 block">{getText('sourceLink')}</label>
+                      <input
+                        value={link}
+                        onChange={(e) => setLink(e.target.value)}
+                        placeholder={getText('pasteLink')}
+                        className="w-full p-3 border-2 border-gray-300 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-[#C8F55A]"
+                      />
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      {!googleDriveAuth ? (
+                        <div className="border-2 border-dashed border-blue-300 rounded-2xl p-8 text-center bg-blue-50">
+                          <svg className="w-12 h-12 mx-auto mb-4 text-blue-500" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.627 0-12 5.373-12 12s5.373 12 12 12 12-5.373 12-12-5.373-12-12-12zm0 2c5.514 0 10 4.486 10 10s-4.486 10-10 10-10-4.486-10-10 4.486-10 10-10zm3.5 11c.828 0 1.5.672 1.5 1.5s-.672 1.5-1.5 1.5-1.5-.672-1.5-1.5.672-1.5 1.5-1.5zm-7 0c.828 0 1.5.672 1.5 1.5s-.672 1.5-1.5 1.5-1.5-.672-1.5-1.5.672-1.5 1.5-1.5zm3.5-9c3.314 0 6 1.343 6 3 0 .553-.671 1.062-1.616 1.447-.164.044-.318-.085-.318-.268v-1.179c0-.552-.447-1-1-1h-6c-.553 0-1 .448-1 1v1.179c0 .183-.154.312-.318.268-1.044-.385-1.616-.894-1.616-1.447 0-1.657 2.686-3 6-3z"/></svg>
+                          <p className="font-semibold text-gray-700 mb-3">{getText('connectGoogleDrive')}</p>
+                          <button
+                            onClick={handleConnectGoogleDrive}
+                            className="inline-flex items-center gap-2 px-6 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-all"
+                          >
+                            <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/></svg>
+                            {getText('connectGoogleDrive')}
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="space-y-4">
+                          <div className="bg-green-50 border border-green-200 rounded-lg p-4 flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                              <span className="text-sm font-medium text-green-800">{getText('googleDriveConnected')}</span>
+                            </div>
+                            <button
+                              onClick={handleDisconnectGoogleDrive}
+                              className="text-sm text-green-600 hover:text-green-800 transition"
+                            >
+                              {getText('disconnect')}
+                            </button>
+                          </div>
+
+                          <div>
+                            <label className="text-sm font-medium text-gray-700 mb-2 block">{getText('selectGoogleFolder')}</label>
+                            <button
+                              onClick={handleLoadGoogleFolders}
+                              disabled={loadingFolders}
+                              className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg text-sm font-medium hover:border-[#C8F55A] transition-all disabled:opacity-50"
+                            >
+                              {loadingFolders ? (
+                                <span className="flex items-center gap-2 justify-center">
+                                  <Loader2 className="animate-spin w-4 h-4" />
+                                  {getText('loadingFolders') || 'Loading...'}
+                                </span>
+                              ) : (
+                                getText('selectFolder')
+                              )}
+                            </button>
+                          </div>
+
+                          {showFolderPicker && (
+                            <div className="border-2 border-gray-300 rounded-lg p-4 bg-gray-50">
+                              <p className="text-sm font-medium text-gray-700 mb-3">{getText('folderSelector')}</p>
+                              {googleFolders.length === 0 ? (
+                                <p className="text-sm text-gray-500 text-center py-4">{getText('noFolders')}</p>
+                              ) : (
+                                <div className="space-y-2 max-h-64 overflow-y-auto">
+                                  {googleFolders.map((folder) => (
+                                    <button
+                                      key={folder.id}
+                                      onClick={() => setSelectedFolderId(folder.id)}
+                                      className={`w-full p-3 text-left rounded-lg border-2 transition-all flex items-center gap-2 ${
+                                        selectedFolderId === folder.id
+                                          ? 'border-[#C8F55A] bg-lime-50'
+                                          : 'border-gray-200 hover:border-gray-300'
+                                      }`}
+                                    >
+                                      <div className="w-4 h-4 border-2 rounded flex items-center justify-center" style={{
+                                        borderColor: selectedFolderId === folder.id ? '#C8F55A' : '#D1D5DB'
+                                      }}>
+                                        {selectedFolderId === folder.id && (
+                                          <div className="w-2 h-2 rounded-full" style={{ backgroundColor: '#C8F55A' }}></div>
+                                        )}
+                                      </div>
+                                      <span className="flex-1 text-sm font-medium text-gray-700 truncate">{folder.name}</span>
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  </div>
 
                   {/* File List */}
                   {files.length > 0 && (
@@ -461,26 +798,71 @@ const BulkCVMatcher = ({ activeItem = "bulk-match" }) => {
                   >
                     {getText('cancel')}
                   </button>
-                  <button
-                    onClick={handleStartMatching}
-                    disabled={files.length === 0 || jd.trim().length < 50 || loading}
-                    className={`flex-1 px-6 py-3 font-semibold rounded-lg flex justify-center items-center gap-2 transition-all duration-200 ${files.length === 0 || jd.trim().length < 50 || loading
-                        ? 'bg-gray-300 text-gray-600 cursor-not-allowed'
-                        : 'bg-[#C8F55A] hover:bg-[#b4e24c] text-merit-dark shadow-lg hover:shadow-xl'
-                      }`}
-                  >
-                    {loading ? (
-                      <>
-                        <Loader2 className="animate-spin w-5 h-5" />
-                        {getText('processingCVs')}
-                      </>
-                    ) : (
-                      <>
-                        <Sparkles className="w-5 h-5" />
-                        {getText('startMatching')}
-                      </>
-                    )}
-                  </button>
+
+                  {uploadMode === 'files' ? (
+                    <button
+                      onClick={handleStartMatching}
+                      disabled={files.length === 0 || jd.trim().length < 50 || loading}
+                      className={`flex-1 px-6 py-3 font-semibold rounded-lg flex justify-center items-center gap-2 transition-all duration-200 ${files.length === 0 || jd.trim().length < 50 || loading
+                          ? 'bg-gray-300 text-gray-600 cursor-not-allowed'
+                          : 'bg-[#C8F55A] hover:bg-[#b4e24c] text-merit-dark shadow-lg hover:shadow-xl'
+                        }`}
+                    >
+                      {loading ? (
+                        <>
+                          <Loader2 className="animate-spin w-5 h-5" />
+                          {getText('processingCVs')}
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="w-5 h-5" />
+                          {getText('startMatching')}
+                        </>
+                      )}
+                    </button>
+                  ) : uploadMode === 'link' ? (
+                    <button
+                      onClick={handleStartFromLink}
+                      disabled={!link || jd.trim().length < 50 || loading}
+                      className={`flex-1 px-6 py-3 font-semibold rounded-lg flex justify-center items-center gap-2 transition-all duration-200 ${!link || jd.trim().length < 50 || loading
+                          ? 'bg-gray-300 text-gray-600 cursor-not-allowed'
+                          : 'bg-[#C8F55A] hover:bg-[#b4e24c] text-merit-dark shadow-lg hover:shadow-xl'
+                        }`}
+                    >
+                      {loading ? (
+                        <>
+                          <Loader2 className="animate-spin w-5 h-5" />
+                          {getText('processingCVs')}
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="w-5 h-5" />
+                          {getText('startImport')}
+                        </>
+                      )}
+                    </button>
+                  ) : (
+                    <button
+                      onClick={handleImportFromGoogleFolder}
+                      disabled={!selectedFolderId || jd.trim().length < 50 || loading}
+                      className={`flex-1 px-6 py-3 font-semibold rounded-lg flex justify-center items-center gap-2 transition-all duration-200 ${!selectedFolderId || jd.trim().length < 50 || loading
+                          ? 'bg-gray-300 text-gray-600 cursor-not-allowed'
+                          : 'bg-[#C8F55A] hover:bg-[#b4e24c] text-merit-dark shadow-lg hover:shadow-xl'
+                        }`}
+                    >
+                      {loading ? (
+                        <>
+                          <Loader2 className="animate-spin w-5 h-5" />
+                          {getText('processingCVs')}
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="w-5 h-5" />
+                          {getText('import')}
+                        </>
+                      )}
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -505,6 +887,7 @@ const BulkCVMatcher = ({ activeItem = "bulk-match" }) => {
                   </li>
                 </ul>
               </div>
+
             </div>
           </div>
         </div>
@@ -517,7 +900,7 @@ const BulkCVMatcher = ({ activeItem = "bulk-match" }) => {
       <div className="min-h-screen flex flex-col" style={{ backgroundColor: '#e1e4e8' }}>
         <TopBar />
         <div className="flex flex-1">
-          <Sidebar activeItem="bulk-match" />
+          <Sidebar activeItem="cv-analyzer" />
           <div className="flex-1 flex items-center justify-center">
             <div className="text-center">
               <div className="mb-8">
@@ -545,7 +928,7 @@ const BulkCVMatcher = ({ activeItem = "bulk-match" }) => {
       <div className="min-h-screen flex flex-col" style={{ backgroundColor: '#e1e4e8' }}>
         <TopBar />
         <div className="flex flex-1">
-          <Sidebar activeItem="bulk-match" />
+          <Sidebar activeItem="cv-analyzer" />
 
           <div className="flex-1 p-4 md:p-10 overflow-y-auto">
             <div className="max-w-7xl mx-auto">

@@ -454,63 +454,106 @@ const handleViewDetails = (submission: Submission) => {
                 <h3 className="text-xl font-bold text-gray-900">
                   {t('assessmentSubmissions.questionsAnswers') || "Questions & Answers"}
                 </h3>
-                {selectedSubmission.questions?.map((question, index) => {
-                  const answer = selectedSubmission.answers?.[index];
-                  
-                  const questionScores = i18n.language === 'ar' && selectedSubmission.question_scores_ar
-                    ? selectedSubmission.question_scores_ar
-                    : selectedSubmission.question_scores;
-                  
-                  const questionScore = questionScores?.[index];
-                  
-                  return (
-                    <div key={index} className="border border-gray-200 rounded-xl p-5 bg-white">
-                      <div className="flex items-start justify-between mb-3">
-                        <p className="font-semibold text-gray-900 text-base flex-1">
-                          Q{index + 1}: {question}
-                        </p>
-                        <div className="flex items-center gap-2 ml-4">
-                          {questionScore?.ai_suspected && (
-                            <span className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded-full font-semibold">
-                              {t('assessmentSubmissions.aiSuspected') || "AI Suspected"}
-                            </span>
-                          )}
-                          {questionScore && (
-                            <span className={`px-3 py-1 rounded-full font-bold ${getScoreColor(questionScore.score)}`}>
-                              {questionScore.score}/100
-                            </span>
+                {selectedSubmission.custom_question_scores && selectedSubmission.custom_question_scores.length > 0 ? (
+                  <div className="space-y-4">
+                    {selectedSubmission.custom_question_scores.map((cq: any, idx: number) => {
+                      const aiSuspected = cq.ai_suspected;
+                      const score = cq.score;
+                      const label = cq.question_type === 'coding' ? 'Code Challenge' : cq.question_type === 'video' || cq.question_type === 'video_response' ? 'Video Response' : cq.question_type;
+
+                      return (
+                        <div key={idx} className="border border-gray-200 rounded-xl p-5 bg-white">
+                          <div className="flex items-start justify-between mb-3">
+                            <p className="font-semibold text-gray-900 text-base flex-1">
+                              {label} (ID: {cq.question_id})
+                            </p>
+                            <div className="flex items-center gap-2 ml-4">
+                              {aiSuspected && (
+                                <span className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded-full font-semibold">
+                                  {t('assessmentSubmissions.aiSuspected') || "AI Suspected"}
+                                </span>
+                              )}
+                              {score !== null && score !== undefined && (
+                                <span className={`px-3 py-1 rounded-full font-bold ${getScoreColor(score)}`}>
+                                  {score}/100
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          {cq.feedback && (
+                            <div className="bg-gray-50 rounded-lg p-3 border border-gray-200">
+                              <p className="text-xs font-semibold text-gray-600 mb-1">
+                                {t('assessmentSubmissions.feedback') || "Feedback"}:
+                              </p>
+                              <p className="text-sm text-gray-700 italic">
+                                📝 {cq.feedback}
+                              </p>
+                            </div>
                           )}
                         </div>
-                      </div>
-
-                      <div className="bg-blue-50 rounded-lg p-4 border border-blue-100 mb-3">
-                        <p className="text-xs font-semibold text-gray-600 mb-2 uppercase">
-                          {t('assessmentSubmissions.answer') || "Answer"}:
-                        </p>
-                        <p className="text-gray-800 whitespace-pre-wrap leading-relaxed">
-                          {answer && typeof answer === 'string' && answer.trim().length > 0 ? (
-                            answer
-                          ) : (
-                            <span className="text-gray-400 italic">
-                              {t('assessmentSubmissions.noAnswerProvided') || "No answer provided"}
-                            </span>
-                          )}
-                        </p>
-                      </div>
-
-                      {questionScore?.feedback && (
-                        <div className="bg-gray-50 rounded-lg p-3 border border-gray-200">
-                          <p className="text-xs font-semibold text-gray-600 mb-1">
-                            {t('assessmentSubmissions.feedback') || "Feedback"}:
+                      );
+                    })}
+                  </div>
+                ) : (
+                  selectedSubmission.questions?.map((question, index) => {
+                    const answer = selectedSubmission.answers?.[index];
+                    
+                    const questionScores = i18n.language === 'ar' && selectedSubmission.question_scores_ar
+                      ? selectedSubmission.question_scores_ar
+                      : selectedSubmission.question_scores;
+                    
+                    const questionScore = questionScores?.[index];
+                    
+                    return (
+                      <div key={index} className="border border-gray-200 rounded-xl p-5 bg-white">
+                        <div className="flex items-start justify-between mb-3">
+                          <p className="font-semibold text-gray-900 text-base flex-1">
+                            Q{index + 1}: {question}
                           </p>
-                          <p className="text-sm text-gray-700 italic">
-                            📝 {questionScore.feedback}
+                          <div className="flex items-center gap-2 ml-4">
+                            {questionScore?.ai_suspected && (
+                              <span className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded-full font-semibold">
+                                {t('assessmentSubmissions.aiSuspected') || "AI Suspected"}
+                              </span>
+                            )}
+                            {questionScore && (
+                              <span className={`px-3 py-1 rounded-full font-bold ${getScoreColor(questionScore.score)}`}>
+                                {questionScore.score}/100
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="bg-blue-50 rounded-lg p-4 border border-blue-100 mb-3">
+                          <p className="text-xs font-semibold text-gray-600 mb-2 uppercase">
+                            {t('assessmentSubmissions.answer') || "Answer"}:
+                          </p>
+                          <p className="text-gray-800 whitespace-pre-wrap leading-relaxed">
+                            {answer && typeof answer === 'string' && answer.trim().length > 0 ? (
+                              answer
+                            ) : (
+                              <span className="text-gray-400 italic">
+                                {t('assessmentSubmissions.noAnswerProvided') || "No answer provided"}
+                              </span>
+                            )}
                           </p>
                         </div>
-                      )}
-                    </div>
-                  );
-                })}
+
+                        {questionScore?.feedback && (
+                          <div className="bg-gray-50 rounded-lg p-3 border border-gray-200">
+                            <p className="text-xs font-semibold text-gray-600 mb-1">
+                              {t('assessmentSubmissions.feedback') || "Feedback"}:
+                            </p>
+                            <p className="text-sm text-gray-700 italic">
+                              📝 {questionScore.feedback}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
               </div>
 
               {/* Skill Scores Visualization - BILINGUAL */}

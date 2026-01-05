@@ -59,6 +59,7 @@ export const fetchJobs = async () => {
     });
 
     const data = await res.json();
+    console.log('fetchJobs response status:', res.status, 'data:', data);
     if (!res.ok) throw new Error(data.error || "Failed to fetch jobs");
     
     // Backend returns: { jobs: [...], language: 'en', total: 5 }
@@ -225,5 +226,217 @@ export const saveLanguagePreference = async (language: string) => {
     });
   } catch (err) {
     console.error("Error saving language preference:", err);
+  }
+};
+
+// ============================================
+// Pre-Built Assessments API
+// ============================================
+
+export interface PreBuiltAssessment {
+  id: number;
+  title: string;
+  title_ar: string;
+  description: string;
+  description_ar: string;
+  category: string;
+  sub_category?: string;
+  difficulty_level: 'beginner' | 'intermediate' | 'advanced' | 'expert';
+  duration_minutes: number;
+  num_questions: number;
+  skills_tested: string[];
+  role_types: string[];
+  industry?: string;
+  times_used: number;
+  avg_score?: number;
+  rating?: number;
+  rating_count?: number;
+  is_featured: boolean;
+  requires_proctoring: boolean;
+  questions?: any[];
+  case_study_content?: any;
+}
+
+export interface PreBuiltCategory {
+  category: string;
+  count: number;
+  featured_count: number;
+  label: { en: string; ar: string };
+}
+
+export interface PublishPreBuiltParams {
+  job_id?: number;
+  custom_title?: string;
+  custom_duration_minutes?: number;
+  custom_instructions?: string;
+  custom_questions?: any[];
+  antiCheating?: {
+    enableFullscreen?: boolean;
+    enableTabSwitch?: boolean;
+    enableCopyPaste?: boolean;
+    enableWebcamProctoring?: boolean;
+    webcam_snapshots_interval?: number;
+    maxTabSwitches?: number;
+  };
+  expires_at?: string;
+}
+
+export const fetchPreBuiltAssessments = async (params?: {
+  category?: string;
+  difficulty?: string;
+  search?: string;
+  featured?: boolean;
+  page?: number;
+  limit?: number;
+}) => {
+  try {
+    const searchParams = new URLSearchParams();
+    if (params?.category) searchParams.append('category', params.category);
+    if (params?.difficulty) searchParams.append('difficulty', params.difficulty);
+    if (params?.search) searchParams.append('search', params.search);
+    if (params?.featured) searchParams.append('featured', 'true');
+    if (params?.page) searchParams.append('page', params.page.toString());
+    if (params?.limit) searchParams.append('limit', params.limit.toString());
+
+    const res = await fetch(`${API_URL}/api/pre-built-assessments?${searchParams.toString()}`, {
+      method: 'GET',
+      headers: getHeaders(),
+    });
+
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed to fetch assessments');
+    return data;
+  } catch (err) {
+    console.error('Error fetching pre-built assessments:', err);
+    throw err;
+  }
+};
+
+export const fetchPreBuiltAssessmentById = async (id: number) => {
+  try {
+    const res = await fetch(`${API_URL}/api/pre-built-assessments/${id}`, {
+      method: 'GET',
+      headers: getHeaders(),
+    });
+
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed to fetch assessment');
+    return data.data as PreBuiltAssessment;
+  } catch (err) {
+    console.error('Error fetching assessment:', err);
+    throw err;
+  }
+};
+
+export const fetchPreBuiltCategories = async () => {
+  try {
+    const res = await fetch(`${API_URL}/api/pre-built-assessments/categories`, {
+      method: 'GET',
+      headers: getHeaders(),
+    });
+
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed to fetch categories');
+    return data.data as PreBuiltCategory[];
+  } catch (err) {
+    console.error('Error fetching categories:', err);
+    throw err;
+  }
+};
+
+export const publishPreBuiltAssessment = async (id: number, params: PublishPreBuiltParams) => {
+  try {
+    const res = await fetch(`${API_URL}/api/pre-built-assessments/${id}/publish`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify(params),
+    });
+
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed to publish assessment');
+    return data;
+  } catch (err) {
+    console.error('Error publishing assessment:', err);
+    throw err;
+  }
+};
+
+export const savePreBuiltAssessment = async (id: number) => {
+  try {
+    const res = await fetch(`${API_URL}/api/pre-built-assessments/${id}/save`, {
+      method: 'POST',
+      headers: getHeaders(),
+    });
+
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed to save assessment');
+    return data;
+  } catch (err) {
+    console.error('Error saving assessment:', err);
+    throw err;
+  }
+};
+
+export const unsavePreBuiltAssessment = async (id: number) => {
+  try {
+    const res = await fetch(`${API_URL}/api/pre-built-assessments/${id}/save`, {
+      method: 'DELETE',
+      headers: getHeaders(),
+    });
+
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed to unsave assessment');
+    return data;
+  } catch (err) {
+    console.error('Error unsaving assessment:', err);
+    throw err;
+  }
+};
+
+export const fetchSavedPreBuiltAssessments = async () => {
+  try {
+    const res = await fetch(`${API_URL}/api/pre-built-assessments/saved`, {
+      method: 'GET',
+      headers: getHeaders(),
+    });
+
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed to fetch saved assessments');
+    return data.data as PreBuiltAssessment[];
+  } catch (err) {
+    console.error('Error fetching saved assessments:', err);
+    throw err;
+  }
+};
+
+export const fetchMyPublishedPreBuiltAssessments = async () => {
+  try {
+    const res = await fetch(`${API_URL}/api/pre-built-assessments/published`, {
+      method: 'GET',
+      headers: getHeaders(),
+    });
+
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed to fetch published assessments');
+    return data.data;
+  } catch (err) {
+    console.error('Error fetching published assessments:', err);
+    throw err;
+  }
+};
+
+export const fetchPreBuiltAssessmentByToken = async (token: string) => {
+  try {
+    const res = await fetch(`${API_URL}/api/pre-built-assessments/share/${token}`, {
+      method: 'GET',
+      headers: getHeaders(),
+    });
+
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Assessment not found or expired');
+    return data.data;
+  } catch (err) {
+    console.error('Error fetching assessment by token:', err);
+    throw err;
   }
 };

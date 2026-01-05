@@ -1,6 +1,6 @@
 import Sidebar from "@/components/dashboard/Sidebar";
 import { Button } from "@/components/ui/button";
-import { Bell, History, Download, RefreshCw, Save, ArrowRight, Check, ChevronDown, X, Plus, Trash2 } from "lucide-react";
+import { Bell, History, Download, RefreshCw, Save, ArrowRight, Check, ChevronDown, X, Plus, Trash2, Code, Video, FileText, Calculator, Database, PenTool, Brain, MessageSquare } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { useToast } from "@/hooks/use-toast";
@@ -75,6 +75,41 @@ export default function DashboardCases() {
   const token = localStorage.getItem("token");
   const selectedCase = cases.find(c => c.id === selectedCaseId);
 
+  // Weight helpers: convert custom question weights (assessments) to percentage distribution summing to 100
+  const sumWeights = (qWeights = [], customQs = []) => {
+    // Questions are deprecated; only customQuestions (assessments) contribute now
+    return (customQs || []).reduce((s, q) => s + (parseFloat(q.weight) || 0), 0);
+  };
+
+  const normalizeWeightsToPercent = (qWeights = [], customQs = []) => {
+    // Keep signature for compatibility; ignore legacy qWeights and normalize customQuestions only
+    const cRaw = (customQs || []).map(q => parseFloat(q.weight) || 0);
+    const combined = cRaw.reduce((a,b) => a + b, 0);
+
+    if (combined > 0) {
+      const cPerc = cRaw.map(w => Number((w / combined * 100).toFixed(1)));
+      // Fix rounding difference
+      const total = cPerc.reduce((a,b) => a + b, 0);
+      const diff = Number((100 - total).toFixed(1));
+      if (Math.abs(diff) > 0 && cPerc.length > 0) {
+        cPerc[cPerc.length - 1] = Number((cPerc[cPerc.length - 1] + diff).toFixed(1));
+      }
+      return { questionWeights: [], customQuestions: (customQs || []).map((cq, idx) => ({ ...cq, weight: cPerc[idx] })) };
+    } else {
+      const totalItems = ((cRaw.length) || 1);
+      const per = Number((100 / totalItems).toFixed(1));
+      const cPerc = cRaw.map(() => per);
+      let total = cPerc.reduce((a,b) => a + b, 0);
+      const diff = Number((100 - total).toFixed(1));
+      if (diff !== 0) {
+        if (cPerc.length > 0) cPerc[cPerc.length - 1] = Number((cPerc[cPerc.length - 1] + diff).toFixed(1));
+      }
+      return { questionWeights: [], customQuestions: (customQs || []).map((cq, idx) => ({ ...cq, weight: cPerc[idx] })) };
+    }
+  };
+
+  const isTotal100 = (qWeights = [], customQs = []) => Math.abs(sumWeights(qWeights, customQs) - 100) <= 0.1;
+
   const fetchCases = async () => {
     try {
       if (!token) return;
@@ -120,8 +155,8 @@ export default function DashboardCases() {
           title: firstCase.title || '',
           description: firstCase.description || '',
           instructions: firstCase.instructions || '',
-          questions: firstCase.questions || [],
           tables: firstCase.tables || [],
+          customQuestions: firstCase.customQuestions || [],
         });
       }
     } catch (err) {
@@ -146,8 +181,9 @@ export default function DashboardCases() {
       editData.title !== selectedCase.title ||
       editData.description !== selectedCase.description ||
       editData.instructions !== selectedCase.instructions ||
-      JSON.stringify(editData.questions) !== JSON.stringify(selectedCase.questions || []) ||
-      JSON.stringify(editData.tables) !== JSON.stringify(selectedCase.tables || []);
+      JSON.stringify(editData.tables) !== JSON.stringify(selectedCase.tables || []) ||
+      JSON.stringify(editData.customQuestions?.map(q => ({ id: q.id, weight: q.weight }))) !== 
+        JSON.stringify(selectedCase.customQuestions?.map(q => ({ id: q.id, weight: q.weight })) || []);
 
     setHasUnsavedChanges(hasChanges);
   }, [editData, selectedCase]);
@@ -182,12 +218,17 @@ export default function DashboardCases() {
     const caseStudy = cases.find(c => c.id === caseId);
     if (caseStudy) {
       setSelectedCaseId(caseId);
+      // Use customQuestions (assessments) only; questions removed
+      const rawCustomQuestions = caseStudy.customQuestions || [];
+      const normalized = normalizeWeightsToPercent([], rawCustomQuestions);
+
       setEditData({
         title: caseStudy.title,
         description: caseStudy.description,
         instructions: caseStudy.instructions,
-        questions: caseStudy.questions || [],
         tables: caseStudy.tables || [],
+        customQuestions: normalized.customQuestions,
+        antiCheatingSettings: caseStudy.antiCheatingSettings || null,
       });
       setIsEditing(false);
       setActiveTab("description");
@@ -199,13 +240,30 @@ export default function DashboardCases() {
     if (!selectedCaseId || !editData) return;
 
     try {
+      // Validate combined weight totals equal 100%
+      const totalWeight = sumWeights([], editData.customQuestions || []);
+      if (Math.abs(totalWeight - 100) > 0.1) {
+        toast({
+          variant: 'destructive',
+          title: i18n.language === 'ar' ? 'خطأ' : 'Error',
+          description: i18n.language === 'ar' ? 'إجمالي الأوزان يجب أن يساوي 100٪. يرجى ضبط الأوزان.' : 'Total weights must equal 100%. Please adjust weights before saving.',
+        });
+        return;
+      }
+
       const payload = {
         title: editData.title,
         description: editData.description,
         instructions: editData.instructions,
         duration_minutes: selectedCase?.duration_minutes,
         status: 'in_review',
-        questions: editData.questions.map((q) => ({ question: q })),
+        // Include custom question weights (assessments)
+        customQuestionWeights: editData.customQuestions?.map(q => ({
+          id: q.id,
+          weight: q.weight || 0
+        })) || [],
+        // Include anti-cheating settings
+        antiCheatingSettings: editData.antiCheatingSettings || null
       };
 
       const res = await fetch(`${import.meta.env.VITE_API_URL}/api/case-studies/${selectedCaseId}`, {
@@ -444,7 +502,12 @@ export default function DashboardCases() {
                       )}
                       {selectedCase.psychometrics?.enabled && (
                         <span className="text-xs font-bold bg-yellow-100 text-yellow-800 px-4 py-2 rounded-full flex items-center gap-1.5 border border-yellow-200">
-                          🧠 {i18n.language === 'ar' ? 'سيكومتري' : 'Psychometrics'}
+                          🧠 {i18n.language === 'ar' ? 'تقييم الشخصية' : 'Personality Assessment'}
+                        </span>
+                      )}
+                      {selectedCase.customQuestions && selectedCase.customQuestions.length > 0 && (
+                        <span className="text-xs font-bold bg-purple-100 text-purple-800 px-4 py-2 rounded-full flex items-center gap-1.5 border border-purple-200">
+                          📝 {i18n.language === 'ar' ? 'تقييمات متقدمة' : 'Assessments'} ({selectedCase.customQuestions.length})
                         </span>
                       )}
                     </div>
@@ -470,8 +533,8 @@ export default function DashboardCases() {
                               title: selectedCase.title,
                               description: selectedCase.description,
                               instructions: selectedCase.instructions,
-                              questions: selectedCase.questions || [],
                               tables: selectedCase.tables || [],
+                              customQuestions: selectedCase.customQuestions || [],
                             });
                             setIsEditing(false);
                             setHasUnsavedChanges(false);
@@ -485,14 +548,41 @@ export default function DashboardCases() {
                     )}
                   </div>
 
+                  {/* Weight Summary Banner */}
+                  {editData.customQuestions && editData.customQuestions.length > 0 && (
+                    <div className="px-8 py-3 bg-gradient-to-r from-blue-50 to-purple-50 border-b border-blue-100">
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="font-bold text-gray-700">
+                          ⚖️ {i18n.language === 'ar' ? 'ملخص الأوزان:' : 'Weight Summary:'}
+                        </span>
+                        <div className="flex items-center gap-6">
+                          <span className="text-gray-600">
+                            {i18n.language === 'ar' ? 'التقييمات:' : 'Assessments:'}{' '}
+                            <span className="font-bold text-purple-600">
+                              {editData.customQuestions.reduce((sum, q) => sum + (parseFloat(q.weight) || 0), 0).toFixed(1)}%
+                            </span>
+                          </span>
+                          <span className="text-gray-400">=</span>
+                          <span className={`font-bold text-lg ${Math.abs((editData.customQuestions.reduce((sum, q) => sum + (parseFloat(q.weight) || 0), 0)) - 100) > 0.1 ? 'text-red-600' : 'text-blue-600'}`}>
+                            {(editData.customQuestions.reduce((sum, q) => sum + (parseFloat(q.weight) || 0), 0)).toFixed(1)}% {i18n.language === 'ar' ? 'إجمالي' : 'Total'}
+                          </span>
+                        </div>
+                      </div>
+                      {Math.abs((editData.customQuestions.reduce((sum, q) => sum + (parseFloat(q.weight) || 0), 0)) - 100) > 0.1 && (
+                        <p className="text-xs text-red-600 mt-2">{i18n.language === 'ar' ? 'اجمالي الأوزان يجب أن يساوي 100٪' : 'Total weights must equal 100%.'}</p>
+                      )}
+                    </div>
+                  )}
+
                   {/* Tab Navigation */}
                   <div className="border-b-2 border-gray-100 px-8 overflow-x-auto bg-gray-50/50">
                     <div className="flex gap-10 whitespace-nowrap">
                       {[
                         { id: 'description', label: i18n.language === 'ar' ? 'السيناريو' : 'Scenario' },
                         { id: 'instructions', label: i18n.language === 'ar' ? 'التعليمات' : 'Instructions' },
-                        { id: 'questions', label: i18n.language === 'ar' ? 'الأسئلة' : 'Questions' },
+                        
                         { id: 'tables', label: i18n.language === 'ar' ? 'الجداول' : 'Tables' },
+                        ...(editData.customQuestions && editData.customQuestions.length > 0 ? [{ id: 'assessments', label: i18n.language === 'ar' ? 'التقييمات' : 'Assessments' }] : []),
                       ].map(tab => (
                         <button
                           key={tab.id}
@@ -503,8 +593,11 @@ export default function DashboardCases() {
                             }`}
                         >
                           {tab.label}
+                          {tab.id === 'assessments' && editData.customQuestions && editData.customQuestions.length > 0 && (
+                            <span className="ml-2 text-xs text-purple-700 font-semibold">{`(${editData.customQuestions.length})`}</span>
+                          )}
                         </button>
-                      ))}
+                      ))} 
                     </div>
                   </div>
 
@@ -609,36 +702,7 @@ export default function DashboardCases() {
                       </div>
                     )}
 
-                    {/* Questions Tab */}
-                    {activeTab === 'questions' && (
-                      <div className="space-y-4">
-                        <div>
-                          <label className="block text-base font-bold text-gray-900 mb-2">
-                            {i18n.language === 'ar' ? 'الأسئلة' : 'Questions'}
-                          </label>
-                          <p className="text-sm text-gray-600 mb-4 leading-relaxed font-medium">
-                            {i18n.language === 'ar' ? '6-7 أسئلة، واحد في كل سطر' : '6-7 questions, one per line'}
-                          </p>
-                        </div>
-                        <textarea
-                          className={`w-full rounded-xl border-2 border-gray-300 px-5 py-4 text-base min-h-[420px] font-mono focus:ring-2 focus:ring-merit-green focus:border-merit-green transition-all resize-none ${i18n.language === 'ar' ? 'text-right rtl' : 'text-left ltr'
-                            }`}
-                          dir={i18n.language === 'ar' ? 'rtl' : 'ltr'}
-                          value={editData.questions.join("\n")}
-                          onChange={(e) => {
-                            const questions = e.target.value.split("\n").filter(q => q.trim());
-                            setEditData({ ...editData, questions });
-                          }}
-                          disabled={!isEditing}
-                          placeholder={i18n.language === 'ar'
-                            ? "1. السؤال الأول...\n2. السؤال الثاني..."
-                            : "1. First question...\n2. Second question..."}
-                        />
-                        <p className="text-sm text-gray-600 font-bold">
-                          {`${editData.questions.length} ${i18n.language === 'ar' ? 'أسئلة' : 'questions'}`}
-                        </p>
-                      </div>
-                    )}
+
 
                     {/* Tables Tab */}
                     {activeTab === 'tables' && (
@@ -770,6 +834,357 @@ export default function DashboardCases() {
                             </p>
                           </div>
                         )}
+                      </div>
+                    )}
+
+                    {/* Assessment Modules Tab */}
+                    {activeTab === 'assessments' && editData.customQuestions && editData.customQuestions.length > 0 && (
+                      <div className="space-y-6">
+                        <div dir={i18n.language === 'ar' ? 'rtl' : 'ltr'}>
+                          <label className={`block text-base font-bold text-gray-900 mb-2 ${i18n.language === 'ar' ? 'text-right' : 'text-left'}`}>
+                            {i18n.language === 'ar' ? 'وحدات التقييم' : 'Assessment Modules'}
+                          </label>
+                          <p className={`text-sm text-gray-600 leading-relaxed font-medium ${i18n.language === 'ar' ? 'text-right' : 'text-left'}`}>
+                            {i18n.language === 'ar'
+                              ? 'أسئلة متعددة الاختيارات، تحديات البرمجة، SQL وأكثر'
+                              : 'MCQs, coding challenges, SQL problems, and more'}
+                          </p>
+                        </div>
+
+                        {/* Group questions by type */}
+                        {(() => {
+                          const questionsByType = editData.customQuestions.reduce((acc, q) => {
+                            const type = q.question_type || 'other';
+                            if (!acc[type]) acc[type] = [];
+                            acc[type].push(q);
+                            return acc;
+                          }, {});
+
+                          const typeLabels = {
+                            mcq: { en: 'Multiple Choice Questions', ar: 'أسئلة الاختيار من متعدد', icon: MessageSquare, color: 'bg-blue-100 text-blue-700 border-blue-200' },
+                            openEnded: { en: 'Open-Ended Questions', ar: 'أسئلة مفتوحة', icon: FileText, color: 'bg-purple-100 text-purple-700 border-purple-200' },
+                            videoResponse: { en: 'Video Response Questions', ar: 'أسئلة الفيديو', icon: Video, color: 'bg-pink-100 text-pink-700 border-pink-200' },
+                            codingChallenge: { en: 'Coding Challenges', ar: 'تحديات البرمجة', icon: Code, color: 'bg-green-100 text-green-700 border-green-200' },
+                            sqlProblem: { en: 'SQL Problems', ar: 'مسائل SQL', icon: Database, color: 'bg-cyan-100 text-cyan-700 border-cyan-200' },
+                            excelTask: { en: 'Excel Tasks', ar: 'مهام إكسل', icon: Calculator, color: 'bg-emerald-100 text-emerald-700 border-emerald-200' },
+                            writingExercise: { en: 'Writing Exercises', ar: 'تمارين الكتابة', icon: PenTool, color: 'bg-amber-100 text-amber-700 border-amber-200' },
+                            situationalJudgment: { en: 'Situational Judgment', ar: 'الحكم الموقفي', icon: Brain, color: 'bg-indigo-100 text-indigo-700 border-indigo-200' },
+                          };
+
+                          return Object.entries(questionsByType).map(([type, questions]) => {
+                            const typeInfo = typeLabels[type] || { en: type, ar: type, icon: FileText, color: 'bg-gray-100 text-gray-700 border-gray-200' };
+                            const IconComponent = typeInfo.icon;
+                            const questionsArray = questions as any[];
+
+                            return (
+                              <div key={type} className="border-2 border-gray-200 rounded-xl overflow-hidden">
+                                <div className={`flex items-center gap-3 px-6 py-4 ${typeInfo.color} border-b`}>
+                                  <IconComponent className="w-5 h-5" />
+                                  <h3 className="font-bold text-base">
+                                    {i18n.language === 'ar' ? typeInfo.ar : typeInfo.en}
+                                  </h3>
+                                  <span className="ml-auto text-sm font-bold bg-white/50 px-3 py-1 rounded-full">
+                                    {questionsArray.length} {i18n.language === 'ar' ? 'سؤال' : 'questions'}
+                                  </span>
+                                </div>
+                                
+                                <div className="divide-y divide-gray-100">
+                                  {questionsArray.map((q: any, idx: number) => (
+                                    <div key={q.id || idx} className="p-5 hover:bg-gray-50 transition-colors">
+                                      <div className="flex items-start gap-4">
+                                        <span className="flex-shrink-0 w-8 h-8 bg-gray-200 rounded-lg flex items-center justify-center text-sm font-bold text-gray-700">
+                                          {idx + 1}
+                                        </span>
+                                        <div className="flex-1 min-w-0">
+                                          <p className={`text-base font-medium text-gray-900 mb-3 ${i18n.language === 'ar' ? 'text-right' : 'text-left'}`} dir={i18n.language === 'ar' ? 'rtl' : 'ltr'}>
+                                            {q.question_text}
+                                          </p>
+
+                                          {/* MCQ Options */}
+                                          {type === 'mcq' && q.options && (
+                                            <div className="mt-3 space-y-2">
+                                              {(Array.isArray(q.options) ? q.options : []).map((opt: any, optIdx: number) => {
+                                                const optionText = typeof opt === 'object' 
+                                                  ? (i18n.language === 'ar' ? (opt.text_ar || opt.text_en || opt.text) : (opt.text_en || opt.text_ar || opt.text))
+                                                  : opt;
+                                                const isCorrect = typeof opt === 'object' ? opt.is_correct : q.correct_answers?.includes(opt);
+                                                return (
+                                                  <div
+                                                    key={optIdx}
+                                                    className={`flex items-center gap-3 px-4 py-2 rounded-lg border-2 ${
+                                                      isCorrect
+                                                        ? 'border-green-300 bg-green-50'
+                                                        : 'border-gray-200 bg-white'
+                                                    }`}
+                                                  >
+                                                    <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
+                                                      isCorrect
+                                                        ? 'bg-green-500 text-white'
+                                                        : 'bg-gray-200 text-gray-600'
+                                                    }`}>
+                                                      {String.fromCharCode(65 + optIdx)}
+                                                    </span>
+                                                    <span className="text-sm text-gray-700">
+                                                      {optionText}
+                                                    </span>
+                                                    {isCorrect && (
+                                                      <Check className="w-4 h-4 text-green-600 ml-auto" />
+                                                    )}
+                                                  </div>
+                                                );
+                                              })}
+                                            </div>
+                                          )}
+
+                                          {/* Coding Challenge Details */}
+                                          {type === 'codingChallenge' && (
+                                            <div className="mt-3 space-y-3">
+                                              {q.starter_code && (
+                                                <div className="bg-gray-900 text-green-400 p-4 rounded-lg overflow-x-auto">
+                                                  <p className="text-xs text-gray-500 mb-2">{i18n.language === 'ar' ? 'الكود المبدئي' : 'Starter Code'}</p>
+                                                  <pre className="text-sm font-mono whitespace-pre-wrap">
+                                                    {typeof q.starter_code === 'object' ? JSON.stringify(q.starter_code, null, 2) : q.starter_code}
+                                                  </pre>
+                                                </div>
+                                              )}
+                                              {q.test_cases && Array.isArray(q.test_cases) && q.test_cases.length > 0 && (
+                                                <div className="bg-gray-50 p-4 rounded-lg">
+                                                  <p className="text-xs font-bold text-gray-700 mb-2">{i18n.language === 'ar' ? 'حالات الاختبار' : 'Test Cases'}</p>
+                                                  <div className="space-y-2">
+                                                    {q.test_cases.slice(0, 3).map((tc, tcIdx) => (
+                                                      <div key={tcIdx} className="text-xs font-mono bg-white p-2 rounded border">
+                                                        <span className="text-blue-600">Input:</span> {JSON.stringify(tc.input)} → <span className="text-green-600">Expected:</span> {JSON.stringify(tc.expected_output ?? tc.expected)}
+                                                      </div>
+                                                    ))}
+                                                  </div>
+                                                </div>
+                                              )}
+                                            </div>
+                                          )}
+
+                                          {/* SQL Problem Details */}
+                                          {type === 'sqlProblem' && q.expected_response && (
+                                            <div className="mt-3 bg-gray-900 text-yellow-400 p-4 rounded-lg overflow-x-auto">
+                                              <p className="text-xs text-gray-500 mb-2">{i18n.language === 'ar' ? 'الإجابة المتوقعة' : 'Expected Query Pattern'}</p>
+                                              <pre className="text-sm font-mono whitespace-pre-wrap">
+                                                {typeof q.expected_response === 'object' ? JSON.stringify(q.expected_response, null, 2) : q.expected_response}
+                                              </pre>
+                                            </div>
+                                          )}
+
+                                          {/* Open-ended/Writing Keywords */}
+                                          {(type === 'openEnded' || type === 'writingExercise') && q.keywords && Array.isArray(q.keywords) && (
+                                            <div className="mt-3 flex flex-wrap gap-2">
+                                              <span className="text-xs font-bold text-gray-500">{i18n.language === 'ar' ? 'كلمات مفتاحية:' : 'Keywords:'}</span>
+                                              {q.keywords.map((kw, kwIdx) => (
+                                                <span key={kwIdx} className="text-xs bg-gray-100 text-gray-700 px-2 py-1 rounded-lg">
+                                                  {kw}
+                                                </span>
+                                              ))}
+                                            </div>
+                                          )}
+
+                                          {/* Video Duration */}
+                                          {type === 'videoResponse' && (
+                                            <div className="mt-2 text-xs text-gray-500">
+                                              {q.min_video_duration && q.max_video_duration && (
+                                                <span>
+                                                  {i18n.language === 'ar' ? 'المدة:' : 'Duration:'} {q.min_video_duration}s - {q.max_video_duration}s
+                                                </span>
+                                              )}
+                                            </div>
+                                          )}
+
+                                          {/* Meta Info */}
+                                          <div className="mt-3 flex items-center gap-4 text-xs text-gray-500">
+                                            {q.time_limit && (
+                                              <span className="flex items-center gap-1">
+                                                ⏱️ {q.time_limit} {i18n.language === 'ar' ? 'دقيقة' : 'min'}
+                                              </span>
+                                            )}
+                                            <div className="flex items-center gap-2">
+                                              <span className="font-bold">⚖️ {i18n.language === 'ar' ? 'الوزن (%):' : 'Weight (%):'}</span>
+                                              {isEditing ? (
+                                                <input
+                                                  type="number"
+                                                  min="0"
+                                                  max="100"
+                                                  step="0.1"
+                                                  className="w-16 px-2 py-1 border-2 border-gray-300 rounded text-xs font-bold text-center focus:ring-2 focus:ring-merit-green focus:border-merit-green"
+                                                  value={q.weight || 0}
+                                                  onChange={(e) => {
+                                                    const val = parseFloat(e.target.value) || 0;
+                                                    const newCustomQuestions = editData.customQuestions.map(cq =>
+                                                      cq.id === q.id ? { ...cq, weight: val } : cq
+                                                    );
+                                                    setEditData({ ...editData, customQuestions: newCustomQuestions });
+                                                  }}
+                                                />
+                                              ) : (
+                                                <span className="font-bold text-gray-700">{q.weight || 0}%</span>
+                                              )}
+                                            </div>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            );
+                          });
+                        })()}
+
+                        {/* Total weight summary */}
+                        <div className="mt-4 p-4 bg-gray-50 rounded-xl border-2 border-gray-200">
+                          <div className="flex items-center justify-between">
+                            <span className="text-sm font-bold text-gray-700">
+                              {i18n.language === 'ar' ? 'إجمالي وزن التقييمات:' : 'Total Assessment Weight:'}
+                            </span>
+                            {(() => {
+                              const aSum = editData.customQuestions.reduce((sum, q) => sum + (parseFloat(q.weight) || 0), 0);
+                              return <span className="text-lg font-bold text-merit-dark">{aSum.toFixed(1)}%</span>;
+                            })()}
+                          </div>
+                          <p className="text-xs text-gray-500 mt-1">
+                            {i18n.language === 'ar'
+                              ? 'الأسئلة ذات الوزن الأعلى تؤثر أكثر على الدرجة الإجمالية'
+                              : 'Questions with higher weights have more impact on the overall score'}
+                          </p>
+                        </div>
+
+                        {/* Anti-cheating settings - editable when in edit mode */}
+                        <div className="mt-6 p-4 bg-merit-green/10 border-2 border-merit-green/30 rounded-xl">
+                          <h4 className="font-bold text-merit-dark mb-3 flex items-center gap-2">
+                            🛡️ {i18n.language === 'ar' ? 'إعدادات مكافحة الغش' : 'Anti-Cheating Settings'}
+                          </h4>
+                          
+                          {isEditing ? (
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                              <label className="flex items-center gap-2 cursor-pointer p-2 rounded hover:bg-merit-green/20 transition-colors">
+                                <input
+                                  type="checkbox"
+                                  checked={editData.antiCheatingSettings?.fullscreen_required || false}
+                                  onChange={(e) => setEditData({
+                                    ...editData,
+                                    antiCheatingSettings: {
+                                      ...editData.antiCheatingSettings,
+                                      fullscreen_required: e.target.checked
+                                    }
+                                  })}
+                                  className="w-4 h-4 rounded border-gray-300 text-merit-green focus:ring-merit-green"
+                                />
+                                <span className="text-sm text-gray-700">
+                                  {i18n.language === 'ar' ? 'إلزام وضع ملء الشاشة' : 'Require Fullscreen Mode'}
+                                </span>
+                              </label>
+                              <label className="flex items-center gap-2 cursor-pointer p-2 rounded hover:bg-merit-green/20 transition-colors">
+                                <input
+                                  type="checkbox"
+                                  checked={editData.antiCheatingSettings?.tab_switch_detection || false}
+                                  onChange={(e) => setEditData({
+                                    ...editData,
+                                    antiCheatingSettings: {
+                                      ...editData.antiCheatingSettings,
+                                      tab_switch_detection: e.target.checked
+                                    }
+                                  })}
+                                  className="w-4 h-4 rounded border-gray-300 text-merit-green focus:ring-merit-green"
+                                />
+                                <span className="text-sm text-gray-700">
+                                  {i18n.language === 'ar' ? 'اكتشاف تبديل التبويبات' : 'Detect Tab Switching'}
+                                </span>
+                              </label>
+                              <label className="flex items-center gap-2 cursor-pointer p-2 rounded hover:bg-merit-green/20 transition-colors">
+                                <input
+                                  type="checkbox"
+                                  checked={editData.antiCheatingSettings?.copy_paste_disabled || false}
+                                  onChange={(e) => setEditData({
+                                    ...editData,
+                                    antiCheatingSettings: {
+                                      ...editData.antiCheatingSettings,
+                                      copy_paste_disabled: e.target.checked
+                                    }
+                                  })}
+                                  className="w-4 h-4 rounded border-gray-300 text-merit-green focus:ring-merit-green"
+                                />
+                                <span className="text-sm text-gray-700">
+                                  {i18n.language === 'ar' ? 'منع النسخ واللصق' : 'Block Copy/Paste'}
+                                </span>
+                              </label>
+                              <label className="flex items-center gap-2 cursor-pointer p-2 rounded hover:bg-merit-green/20 transition-colors">
+                                <input
+                                  type="checkbox"
+                                  checked={editData.antiCheatingSettings?.webcam_required || false}
+                                  onChange={(e) => setEditData({
+                                    ...editData,
+                                    antiCheatingSettings: {
+                                      ...editData.antiCheatingSettings,
+                                      webcam_required: e.target.checked
+                                    }
+                                  })}
+                                  className="w-4 h-4 rounded border-gray-300 text-merit-green focus:ring-merit-green"
+                                />
+                                <span className="text-sm text-gray-700">
+                                  {i18n.language === 'ar' ? 'مراقبة الكاميرا' : 'Webcam Proctoring'}
+                                </span>
+                              </label>
+                              {editData.antiCheatingSettings?.tab_switch_detection && (
+                                <div className="col-span-2 flex items-center gap-2 p-2">
+                                  <label className="text-sm text-gray-600">
+                                    {i18n.language === 'ar' ? 'الحد الأقصى لتبديل التبويبات:' : 'Max tab switches:'}
+                                  </label>
+                                  <input
+                                    type="number"
+                                    min="1"
+                                    max="10"
+                                    value={editData.antiCheatingSettings?.tab_switch_limit || 3}
+                                    onChange={(e) => setEditData({
+                                      ...editData,
+                                      antiCheatingSettings: {
+                                        ...editData.antiCheatingSettings,
+                                        tab_switch_limit: parseInt(e.target.value) || 3
+                                      }
+                                    })}
+                                    className="w-16 border border-gray-300 rounded px-2 py-1 text-sm focus:border-merit-green focus:outline-none"
+                                  />
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            // View-only mode: show badges
+                            selectedCase.antiCheatingSettings ? (
+                              <div className="flex flex-wrap gap-3 text-sm">
+                                {selectedCase.antiCheatingSettings.fullscreen_required && (
+                                  <span className="bg-merit-green/20 text-merit-dark px-3 py-1 rounded-full">
+                                    {i18n.language === 'ar' ? 'ملء الشاشة مطلوب' : 'Fullscreen Required'}
+                                  </span>
+                                )}
+                                {selectedCase.antiCheatingSettings.tab_switch_detection && (
+                                  <span className="bg-merit-green/20 text-merit-dark px-3 py-1 rounded-full">
+                                    {i18n.language === 'ar' ? 'كشف تبديل التبويب' : 'Tab Switch Detection'}
+                                    {selectedCase.antiCheatingSettings.tab_switch_limit && 
+                                      ` (${selectedCase.antiCheatingSettings.tab_switch_limit})`}
+                                  </span>
+                                )}
+                                {selectedCase.antiCheatingSettings.copy_paste_disabled && (
+                                  <span className="bg-merit-green/20 text-merit-dark px-3 py-1 rounded-full">
+                                    {i18n.language === 'ar' ? 'تعطيل النسخ/اللصق' : 'Copy/Paste Disabled'}
+                                  </span>
+                                )}
+                                {selectedCase.antiCheatingSettings.webcam_required && (
+                                  <span className="bg-merit-green/20 text-merit-dark px-3 py-1 rounded-full">
+                                    {i18n.language === 'ar' ? 'الكاميرا مطلوبة' : 'Webcam Required'}
+                                  </span>
+                                )}
+                              </div>
+                            ) : (
+                              <p className="text-sm text-gray-500 italic">
+                                {i18n.language === 'ar' ? 'لا توجد إعدادات مكافحة غش مفعلة' : 'No anti-cheating settings enabled'}
+                              </p>
+                            )
+                          )}
+                        </div>
                       </div>
                     )}
                   </div>

@@ -3,7 +3,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useTranslation } from 'react-i18next';
 import Sidebar from "@/components/dashboard/Sidebar";
 import { LanguageSwitcher } from '@/components/LanguageSwitcher';
-import { Bell, History, Briefcase, MapPin, Clock, RefreshCw, Save, Check, Calendar, Edit2, X } from "lucide-react";
+import { Bell, History, Briefcase, MapPin, Clock, RefreshCw, Save, Check, Calendar, Edit2, X, Upload } from "lucide-react";
 import { getHeaders } from "@/lib/apiService";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import TextareaAutosize from 'react-textarea-autosize';
@@ -357,6 +357,7 @@ export default function AIJobForm() {
   useEffect(() => {
     document.documentElement.dir = i18n.language === 'ar' ? 'rtl' : 'ltr';
     document.documentElement.lang = i18n.language;
+    console.log('i18n.language (DashboardUpload):', i18n.language, ' - createJobText =>', t('dashboardUploadPage.createJobText'));
   }, [i18n.language]);
 
   const handleChange = (e) => {
@@ -614,6 +615,20 @@ export default function AIJobForm() {
           <Sidebar activeItem="create" />
         </div>
         <main className="flex-1 p-6 md:p-10 lg:px-20">
+          <div className="mb-8">
+            <div className="flex items-center justify-between gap-6">
+              <div className="flex-1">
+                <h1 className="text-3xl md:text-4xl font-bold text-[#1a1a1a] mb-1 flex items-center gap-2">
+                  <Upload className="w-8 h-8 text-[#75A400]" />
+                  {t('dashboardUploadPage.createJob', 'Create Job')}
+                </h1>
+                <p className="text-gray-600">
+                  {t('dashboardUploadPage.createJobText', 'Create a job by generating with AI, uploading a job description, or entering details, then save or export it.')}
+                </p>
+              </div>
+            </div>
+          </div>
+
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 md:gap-6">
             <section className="bg-white border border-gray-200 rounded-2xl p-5">
               <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">

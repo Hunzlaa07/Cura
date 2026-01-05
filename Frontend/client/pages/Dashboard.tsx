@@ -4,6 +4,10 @@ import { useToast } from "@/hooks/use-toast";
 import { useTranslation } from "react-i18next";
 import Sidebar from "@/components/dashboard/Sidebar";
 import CandidateCard from "@/components/dashboard/CandidateCard";
+import AllCandidatesModal from "@/components/dashboard/AllCandidatesModal";
+import AllCVsModal from "@/components/dashboard/AllCVsModal";
+import AllShortlistedModal from "@/components/dashboard/AllShortlistedModal";
+import AllAssessmentsModal from "@/components/dashboard/AllAssessmentsModal";
 import AssessmentSubmissions from "@/components/dashboard/AssessmentSubmissions";
 import { Button } from "@/components/ui/button";
 import {
@@ -12,7 +16,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Filter, Plus, Bell, X } from "lucide-react";
+import { Filter, Plus, Bell, X, HomeIcon } from "lucide-react";
 import { History, Save, Check, MoreVertical, Briefcase, MapPin, Clock, Calendar, Share2, Settings, ArrowLeft } from "lucide-react";
 import { FileText } from "lucide-react";
 import { LanguageSwitcher } from '@/components/LanguageSwitcher';
@@ -94,14 +98,42 @@ export default function Dashboard() {
 
   // View All states
   const [showAllCandidates, setShowAllCandidates] = useState(false);
-  const [showAllCVs, setShowAllCVs] = useState(false);
-  const [showAllShortlisted, setShowAllShortlisted] = useState(false);
-  const [showAllAssessments, setShowAllAssessments] = useState(false);
+  const [showAllCandidatesModal, setShowAllCandidatesModal] = useState(false);
+  const [showAllCVsModal, setShowAllCVsModal] = useState(false);
+  const [showAllShortlistedModal, setShowAllShortlistedModal] = useState(false);
+  const [showAllAssessmentsModal, setShowAllAssessmentsModal] = useState(false);
 
   // Update document direction
   useEffect(() => {
     document.documentElement.dir = i18n.language === 'ar' ? 'rtl' : 'ltr';
     document.documentElement.lang = i18n.language;
+  }, [i18n.language]);
+
+  // Refetch shortlisted candidates when page becomes visible
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        // Page became visible, refetch shortlisted data
+        const refetchShortlisted = async () => {
+          try {
+            const token = localStorage.getItem("token");
+            const res = await fetch(`${import.meta.env.VITE_API_URL}/api/recruiters/shortlisted`, {
+              headers: { Authorization: `Bearer ${token}`, "Accept-Language": i18n.language },
+            });
+            if (res.ok) {
+              const shortlistedData = await res.json();
+              setShortlisted(shortlistedData.data || []);
+            }
+          } catch (err) {
+            console.error("Error refetching shortlisted candidates:", err);
+          }
+        };
+        refetchShortlisted();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, [i18n.language]);
 
   // Fetch data from backend
@@ -365,11 +397,11 @@ export default function Dashboard() {
   // Get visible candidates based on showAllCandidates state
   const visibleCandidates = showAllCandidates ? filteredCandidates : filteredCandidates.slice(0, 5);
 
-  // Get visible CVs based on showAllCVs state
-  const visibleCVs = showAllCVs ? cvs : cvs.slice(0, 5);
+  // Get visible CVs - always show first 5, use modal for all
+  const visibleCVs = cvs.slice(0, 5);
 
-  // Get visible shortlisted based on showAllShortlisted state
-  const visibleShortlisted = showAllShortlisted ? shortlisted : shortlisted.slice(0, 5);
+  // Get visible shortlisted - always show first 5, use modal for all
+  const visibleShortlisted = shortlisted.slice(0, 5);
 
   return (
     <div className="h-screen bg-[#bfcad6] flex flex-col overflow-y-auto">
@@ -433,7 +465,8 @@ export default function Dashboard() {
             {/* Title & Add Job */}
             <div className="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
               <div>
-                <h1 className="text-3xl font-semibold text-merit-dark">
+                <h1 className="text-3xl font-semibold text-merit-dark flex items-center gap-2">
+                  <HomeIcon className="w-8 h-8 text-[#75A400]" />
                   {t('dashboardPage.title') || 'Recruiter Dashboard'}
                 </h1>
                 <p className="text-base text-merit-gray">
@@ -520,19 +553,16 @@ export default function Dashboard() {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => setShowAllCandidates(!showAllCandidates)}
+                  onClick={() => setShowAllCandidatesModal(true)}
                 >
-                  {showAllCandidates
-                    ? (i18n.language === 'ar' ? 'عرض أقل' : 'View Less')
-                    : (i18n.language === 'ar' ? 'عرض الكل' : 'View All')
-                  }
+                  {(i18n.language === 'ar' ? 'عرض الكل' : 'View All')}
                 </Button>
               )}
             </div>
 
             {planType === 'case_only' ? (
               <div className="overflow-x-auto">
-                <AssessmentSubmissions showAll={showAllAssessments} />
+                <AssessmentSubmissions showAll={false} />
               </div>
             ) : candidateList.length === 0 ? (
               <div className="text-center py-12 text-gray-500">
@@ -620,12 +650,9 @@ export default function Dashboard() {
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => setShowAllCVs(!showAllCVs)}
+                      onClick={() => setShowAllCVsModal(true)}
                     >
-                      {showAllCVs
-                        ? (i18n.language === 'ar' ? 'عرض أقل' : 'View Less')
-                        : (i18n.language === 'ar' ? 'عرض الكل' : 'View All')
-                      }
+                      {i18n.language === 'ar' ? 'عرض الكل' : 'View All'}
                     </Button>
                   )}
                 </div>
@@ -665,12 +692,9 @@ export default function Dashboard() {
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => setShowAllShortlisted(!showAllShortlisted)}
+                      onClick={() => setShowAllShortlistedModal(true)}
                     >
-                      {showAllShortlisted
-                        ? (i18n.language === 'ar' ? 'عرض أقل' : 'View Less')
-                        : (i18n.language === 'ar' ? 'عرض الكل' : 'View All')
-                      }
+                      {i18n.language === 'ar' ? 'عرض الكل' : 'View All'}
                     </Button>
                   )}
                 </div>
@@ -735,21 +759,49 @@ export default function Dashboard() {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => setShowAllAssessments(!showAllAssessments)}
+                  onClick={() => setShowAllAssessmentsModal(true)}
                 >
-                  {showAllAssessments
-                    ? (i18n.language === 'ar' ? 'عرض أقل' : 'View Less')
-                    : (i18n.language === 'ar' ? 'عرض الكل' : 'View All')
-                  }
+                  {i18n.language === 'ar' ? 'عرض الكل' : 'View All'}
                 </Button>
               </div>
               <div className="overflow-x-auto">
-                <AssessmentSubmissions showAll={showAllAssessments} />
+                <AssessmentSubmissions showAll={false} />
               </div>
             </section>
           )}
         </main>
       </div>
+
+      {/* All Candidates Modal */}
+      <AllCandidatesModal
+        isOpen={showAllCandidatesModal}
+        onClose={() => setShowAllCandidatesModal(false)}
+        candidates={filteredCandidates}
+        onShortlist={handleShortlist}
+        onView={(id) => { if (id) navigate(`/recruiter-dashboard/applicants/${id}`); }}
+      />
+
+      {/* All CVs Modal */}
+      <AllCVsModal
+        isOpen={showAllCVsModal}
+        onClose={() => setShowAllCVsModal(false)}
+        cvs={cvs}
+      />
+
+      {/* All Shortlisted Modal */}
+      <AllShortlistedModal
+        isOpen={showAllShortlistedModal}
+        onClose={() => setShowAllShortlistedModal(false)}
+        shortlisted={shortlisted}
+        onRemove={handleRemoveShortlist}
+      />
+
+      {/* All Assessments Modal */}
+      <AllAssessmentsModal
+        isOpen={showAllAssessmentsModal}
+        onClose={() => setShowAllAssessmentsModal(false)}
+      />
+
     </div>
   );
 }

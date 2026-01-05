@@ -15,6 +15,7 @@ interface CandidateCardProps {
   onMessage?: () => void;
   isShortlisted?: boolean;
   isRejected?: boolean;  // ADD THIS LINE
+  compact?: boolean; // compact variant for modal
 }
 
 export default function CandidateCard({
@@ -31,10 +32,11 @@ export default function CandidateCard({
   onMessage,
   isShortlisted = false,
   isRejected = false,  // ADD THIS LINE
+  compact = false,
 }: CandidateCardProps) {
   return (
     <div 
-      className="rounded-3xl p-5 md:p-8 shadow-sm border border-gray-300 hover:shadow-md transition-shadow duration-300 relative h-[420px] flex flex-col"
+      className={`rounded-3xl ${compact ? 'p-4 h-[260px]' : 'p-5 md:p-8 h-[420px]'} shadow-sm border border-gray-300 hover:shadow-md transition-shadow duration-300 relative flex flex-col`}
       style={{ backgroundColor: '#e1e4e8' }}
     >
 
@@ -57,7 +59,7 @@ export default function CandidateCard({
           <img
             src={avatar}
             alt={name}
-            className="w-12 h-12 md:w-14 md:h-14 rounded-full object-cover flex-shrink-0"
+            className={`${compact ? 'w-10 h-10 md:w-10 md:h-10' : 'w-12 h-12 md:w-14 md:h-14'} rounded-full object-cover flex-shrink-0`}
           />
           <div className="min-w-0 flex-1">
             <h3 className="text-lg font-semibold text-merit-dark truncate">{name}</h3>
@@ -66,9 +68,9 @@ export default function CandidateCard({
         </div>
 
         {/* AI Score */}
-        <div className="flex items-center gap-2 flex-shrink-0 ml-2">
+          <div className={`flex items-center gap-2 flex-shrink-0 ml-2 ${compact ? 'text-sm' : ''}`}>
           <div className="w-2.5 h-2.5 bg-merit-dark rounded-full"></div>
-          <span className="text-2xl font-semibold text-merit-dark">{score}</span>
+          <span className={`${compact ? 'text-lg font-semibold' : 'text-2xl font-semibold text-merit-dark'}`}>{score}</span>
         </div>
       </div>
 
@@ -104,23 +106,23 @@ export default function CandidateCard({
       {/* Action Buttons - Always at bottom */}
       <div className="flex gap-2 mt-auto">
         <Button
-  onClick={onShortlist}
-  disabled={isShortlisted || isRejected}  // ADD isRejected here
-  className={`flex items-center gap-2 flex-1 h-9 ${
-    isShortlisted || isRejected  // ADD isRejected here
-      ? "bg-gray-300 text-gray-500 cursor-not-allowed"
-      : "bg-merit-green text-merit-dark hover:bg-merit-green/90"
-  }`}
-  title={isRejected ? "Cannot shortlist a rejected candidate" : ""}  // ADD tooltip
->
-  <Check className="w-4 h-4" />
-  {isShortlisted ? "Shortlisted" : isRejected ? "Rejected" : "Shortlist"}  
-</Button>
+          onClick={onShortlist}
+          disabled={isShortlisted || isRejected}
+          className={`flex items-center gap-2 flex-1 ${compact ? 'h-8 text-sm' : 'h-9'} ${
+            isShortlisted || isRejected
+              ? "bg-gray-300 text-gray-500 cursor-not-allowed"
+              : "bg-merit-green text-merit-dark hover:bg-merit-green/90"
+          }`}
+          title={isRejected ? "Cannot shortlist a rejected candidate" : ""}
+        >
+          <Check className="w-4 h-4" />
+          {isShortlisted ? "Shortlisted" : isRejected ? "Rejected" : "Shortlist"}
+        </Button>
 
         <Button
           onClick={onView}
           variant="outline"
-          className="border-gray-300 text-merit-gray hover:bg-gray-50 flex items-center gap-2 flex-1 h-9"
+          className={`border-gray-300 text-merit-gray hover:bg-gray-50 flex items-center gap-2 flex-1 ${compact ? 'h-8 text-sm' : 'h-9'}`}
         >
           <Eye className="w-4 h-4" />
           View
@@ -129,7 +131,7 @@ export default function CandidateCard({
         <Button
           onClick={onMessage}
           variant="outline"
-          className="border-gray-300 text-merit-gray hover:bg-gray-50 px-3 h-9"
+          className={`border-gray-300 text-merit-gray hover:bg-gray-50 px-3 ${compact ? 'h-8' : 'h-9'}`}
         >
           <MessageCircle className="w-4 h-4" />
         </Button>

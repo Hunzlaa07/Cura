@@ -118,6 +118,8 @@ export default function MyJobsDashboard() {
   const { toast } = useToast();
 
   const token = localStorage.getItem("token");
+  const [linkedInConnected, setLinkedInConnected] = useState<boolean>(false);
+  const [sharingJobId, setSharingJobId] = useState<number | null>(null);
 
   // Update document direction
   useEffect(() => {
@@ -127,7 +129,85 @@ export default function MyJobsDashboard() {
 
   useEffect(() => {
     fetchMyJobs();
+    checkLinkedInStatus();
+
+    // Handle LinkedIn OAuth redirect flags
+    try {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('linkedin_connected') === '1') {
+        toast({ title: 'LinkedIn connected', description: i18n.language === 'ar' ? 'تم الاتصال بـ LinkedIn' : 'LinkedIn account connected successfully' });
+        setLinkedInConnected(true);
+        // Clean URL
+        params.delete('linkedin_connected');
+        window.history.replaceState({}, document.title, window.location.pathname + (params.toString() ? '?' + params.toString() : ''));
+      }
+
+      const lnError = params.get('linkedin_error');
+      if (lnError) {
+        const desc = params.get('linkedin_error_description') || '';
+        toast({ variant: 'destructive', title: i18n.language === 'ar' ? 'خطأ في LinkedIn' : 'LinkedIn error', description: desc });
+        // Clean URL
+        params.delete('linkedin_error');
+        params.delete('linkedin_error_description');
+        window.history.replaceState({}, document.title, window.location.pathname + (params.toString() ? '?' + params.toString() : ''));
+      }
+    } catch (e) {
+      console.error('Failed to parse LinkedIn redirect params', e);
+    }
+
   }, []);
+
+  const checkLinkedInStatus = async () => {
+    try {
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/integrations/linkedin/status`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!res.ok) return setLinkedInConnected(false);
+      const data = await res.json();
+      setLinkedInConnected(!!data.authenticated);
+    } catch (err) {
+      console.error('LinkedIn status check failed', err);
+      setLinkedInConnected(false);
+    }
+  };
+
+  const handleConnectLinkedIn = async () => {
+    try {
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/integrations/linkedin/auth-url`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!res.ok) throw new Error('Failed to get LinkedIn auth URL');
+      const data = await res.json();
+      window.location.href = data.authUrl;
+    } catch (err: any) {
+      toast({ variant: 'destructive', title: 'Error', description: err.message || 'Could not connect to LinkedIn' });
+    }
+  };
+
+  const handleShareToLinkedIn = async (jobId: number) => {
+    try {
+      setSharingJobId(jobId);
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/integrations/linkedin/share-job`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ jobId })
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'Failed to post to LinkedIn' }));
+        throw new Error(err.error || 'Failed to post to LinkedIn');
+      }
+      await res.json();
+      toast({ title: 'Posted to LinkedIn', description: 'Your job was posted successfully' });
+      setLinkedInConnected(true);
+    } catch (err: any) {
+      toast({ variant: 'destructive', title: 'Error', description: err.message });
+    } finally {
+      setSharingJobId(null);
+    }
+  };
 
   const fetchMyJobs = async () => {
     try {
@@ -521,7 +601,8 @@ export default function MyJobsDashboard() {
             {/* Header */}
             <div className="flex items-center justify-between mb-10">
               <div>
-                <h1 className="text-3xl font-bold text-gray-900">
+                <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-2">
+                  <Briefcase className="w-8 h-8 text-[#75A400]" />
                   {i18n.language === 'ar' ? 'وظائفي' : 'My Jobs'}
                 </h1>
                 <p className="text-gray-600 mt-1">
@@ -721,6 +802,21 @@ export default function MyJobsDashboard() {
                               {i18n.language === 'ar' ? 'فتح الوظيفة' : 'Open Job'}
                             </>
                           )}
+                        </button>
+
+                        {/* LinkedIn Share Button */}
+                        <button
+                          onClick={() => {
+                            if (!linkedInConnected) handleConnectLinkedIn();
+                            else handleShareToLinkedIn(job.id);
+                          }}
+                          disabled={sharingJobId === job.id}
+                          className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium ${sharingJobId === job.id ? 'bg-gray-300 text-gray-500' : 'bg-blue-600 text-white hover:bg-blue-700'} transition`}
+                        >
+                          <Send className="w-4 h-4" />
+                          {sharingJobId === job.id ? (
+                            i18n.language === 'ar' ? 'جارٍ النشر...' : 'Posting...'
+                          ) : (!linkedInConnected ? (i18n.language === 'ar' ? 'اتصل بـ LinkedIn' : 'Connect LinkedIn') : (i18n.language === 'ar' ? 'نشر على LinkedIn' : 'Post to LinkedIn'))}
                         </button>
                       </div>
                     </div>

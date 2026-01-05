@@ -11,7 +11,6 @@ import Index from "./pages/Index";
 import Dashboard from "./pages/Dashboard";
 import DashboardCases from "./pages/DashboardCases";
 import DashboardCasesPreview from "./pages/DashboardCasesPreview";
-import CaseStudyPreview from "./pages/CaseStudyPreview";
 import DashboardUpload from "./pages/DashboardUpload";
 import ApplicantDashboard from "./pages/ApplicantDashboard";
 import CaseStudyAssessment from "./pages/CaseStudyAssessment";
@@ -24,13 +23,13 @@ import AssessmentStart from "./pages/AssessmentStart";
 import MyJobsDashboard from './pages/MyJobsDashboard';
 import ViewApplicants from './pages/ViewApplicants';
 import JobApplication from './pages/JobApplication';
-import CaseStudyLogin from './pages/CaseStudyLogin';
 import ApplicantSettings from './pages/ApplicantSettings';
 import AssessmentResultsView from './pages/AssessmentResultsView';
 import BulkCVMatcher from './pages/BulkCVMatcher';
 import CaseStudyAssessments from './pages/CaseStudyAssessments';
 import AssessmentApplicationForm from './pages/AssessmentApplicationForm';
 import AssessmentApplications from './pages/AssessmentApplications';
+import PreBuiltAssessments from './pages/PreBuiltAssessments';
 
 const queryClient = new QueryClient();
 
@@ -63,13 +62,13 @@ const App = () => (
           <Route path="/assessment-start/:jobId" element={<AssessmentStart />} />
           <Route path="/profile/update" element={<UpdateProfile />} />
           <Route path="/login" element={<Login />} />
-          <Route path="/signup" element={<Signup />} />
-          <Route path="/case-study/login" element={<CaseStudyLogin />} />
+          <Route path="/protected-signup" element={<Signup />} />
           <Route path="/jobs/:jobId/assessment/:applicantEmail" element={<AssessmentResultsView />} />
           <Route path="/recruiter-dashboard/case-study-preview/:caseStudyId" element={<DashboardCasesPreview />} />
           <Route path="/recruiter-dashboard/bulk-match" element={<BulkCVMatcher />} />
           <Route path="/recruiter-dashboard/case-study-assessments" element={<CaseStudyAssessments />} />
           <Route path="/recruiter-dashboard/case-study-assessments/:assessmentId/applications" element={<AssessmentApplications />} />
+          <Route path="/recruiter-dashboard/pre-built-assessments" element={<PreBuiltAssessments />} />
           <Route path="/assessment/apply/:shareLink" element={<AssessmentApplicationForm />} />
           <Route path="*" element={<NotFound />} />
         </Routes>

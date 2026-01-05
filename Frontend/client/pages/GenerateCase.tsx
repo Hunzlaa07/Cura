@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import Sidebar from "@/components/dashboard/Sidebar";
 import { useNavigate, useParams } from "react-router-dom";
-import { Bell, History, Sparkles, Loader2, RefreshCw, Upload, X, FileText, ChevronLeft, Brain } from "lucide-react";
+import { Bell, History, Sparkles, Loader2, RefreshCw, Upload, X, FileText, ChevronLeft, Brain, Briefcase } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useTranslation } from 'react-i18next';
 import { LanguageSwitcher } from '@/components/LanguageSwitcher';
@@ -28,10 +28,10 @@ function TopBar() {
     <header className="h-14 md:h-16 border-b border-gray-200 bg-white px-4 md:px-6 flex items-center justify-between">
       <div className="flex items-center gap-3">
         <div className="w-10 h-10 md:w-14 md:h-14 bg-merit-dark rounded-lg flex items-center justify-center">
-          <svg width="28" height="28" viewBox="0 0 75 76" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-6 h-6 md:w-8 md:h-8">
+          <svg width="28" height="28" viewBox="0 0 75 76" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-6 h-6 md:w-8 md:h-8 text-merit-green">
             <path d="M16.9671 31.0082C19.0128 36.6402 23.007 41.6008 27.6225 45.3565C32.2724 49.2127 37.8323 52.1652 43.6934 53.6806C45.7814 54.215 47.919 54.5325 50.0722 54.6282C54.1573 54.7851 58.5845 53.9818 61.8633 51.3651C65.9328 48.1145 67.0436 43.1288 65.9987 38.1557C65.343 35.04 63.9875 32.1 62.2179 29.4111C61.8523 28.8502 61.4693 28.3009 61.0695 27.7639C61.0698 27.7591 61.0714 27.7545 61.0742 27.7506C61.077 27.7467 61.0808 27.7437 61.0852 27.7419H61.0978C61.104 27.7419 61.1103 27.7419 61.1166 27.7482L62.3528 29.0189C65.3489 32.1081 67.9654 35.5441 70.1467 39.2538C71.9634 42.3695 73.3565 45.6734 74.0844 49.1185C75.2422 54.6 74.304 60.2445 69.9867 64.107C67.715 66.1401 64.7939 67.3732 61.8602 67.9819C57.7907 68.8197 53.5486 68.6973 49.4195 68.0039C47.3205 67.6525 45.2936 67.1881 43.342 66.6139C35.2594 64.2419 27.6162 60.1787 20.9299 55.0769C16.9025 52.0591 13.2347 48.5892 9.99842 44.7353C6.6945 40.8007 3.86122 36.3547 2.10729 31.5133C0.955784 28.3506 0.306296 24.8364 0.689087 21.5043C1.52683 14.2689 6.90158 10.0394 13.7855 8.76553C17.7546 8.03133 21.9245 8.18193 25.9564 8.88162C30.2491 9.63452 34.4384 10.8898 38.4378 12.6217V12.6342C38.4369 12.6372 38.4353 12.6399 38.4331 12.6421C38.431 12.6443 38.4283 12.6459 38.4253 12.6468H38.4127C35.4815 11.8565 32.441 11.5492 29.4109 11.7369C26.8788 11.8875 24.1836 12.5621 22.0155 13.7951C18.7712 15.6401 16.7757 18.3855 16.0321 22.0314C15.8208 23.1689 15.7481 24.3278 15.8156 25.4828C15.894 27.3026 16.327 29.2417 16.9671 31.0082Z" fill="url(#paint0_linear)" />
-            <path d="M57.1175 23.3005C57.1202 23.3334 57.1125 23.3664 57.0955 23.3947C55.649 26.2687 54.1995 29.1428 52.7467 32.0137C51.4164 34.6399 50.4092 36.5225 49.7189 37.6614C47.1342 41.9377 43.9897 45.8493 40.3688 49.2926C40.3565 49.3044 40.341 49.3122 40.3242 49.315C40.3074 49.3178 40.2901 49.3155 40.2747 49.3083C35.338 47.316 30.8515 44.3531 27.081 40.5951C26.6417 40.1559 26.2024 39.6915 25.7632 39.1926C25.754 39.1809 25.7486 39.1667 25.7475 39.1518C25.7475 39.1361 25.7475 39.1204 25.7569 39.1079C27.3061 36.4793 29.0692 33.9827 31.0281 31.6435C33.5638 28.6344 36.4027 25.8944 39.4997 23.4668C40.7798 22.4628 43.861 20.0343 48.7557 16.1781L68.5133 0.606092L68.529 0.600586L68.5447 0.606092C68.5505 0.609805 68.5549 0.615317 68.5572 0.621781C68.5592 0.627908 68.5592 0.634479 68.5572 0.640606L57.1112 23.3005H57.1175Z" fill="#C8F55A" />
-            <path d="M6.93747 75.9035C6.94375 75.9035 6.95002 75.9035 6.95316 75.8972L25.2863 61.5269C25.2945 61.5207 25.3011 61.5126 25.3055 61.5033C25.3099 61.494 25.3119 61.4838 25.3114 61.4735C25.3107 61.4632 25.3075 61.4533 25.302 61.4445C25.2965 61.4358 25.289 61.4285 25.28 61.4233C22.4655 59.659 19.7582 57.7291 17.1724 55.6438H17.1536L17.1379 55.6501C17.1324 55.6541 17.128 55.6595 17.1253 55.6658L6.91551 75.8627C6.91358 75.8688 6.91358 75.8754 6.91551 75.8815C6.91551 75.8878 6.91551 75.8941 6.92178 75.8972C6.92709 75.9015 6.93378 75.9037 6.94061 75.9035H6.93747Z" fill="#C8F55A" />
+            <path d="M57.1175 23.3005C57.1202 23.3334 57.1125 23.3664 57.0955 23.3947C55.649 26.2687 54.1995 29.1428 52.7467 32.0137C51.4164 34.6399 50.4092 36.5225 49.7189 37.6614C47.1342 41.9377 43.9897 45.8493 40.3688 49.2926C40.3565 49.3044 40.341 49.3122 40.3242 49.315C40.3074 49.3178 40.2901 49.3155 40.2747 49.3083C35.338 47.316 30.8515 44.3531 27.081 40.5951C26.6417 40.1559 26.2024 39.6915 25.7632 39.1926C25.754 39.1809 25.7486 39.1667 25.7475 39.1518C25.7475 39.1361 25.7475 39.1204 25.7569 39.1079C27.3061 36.4793 29.0692 33.9827 31.0281 31.6435C33.5638 28.6344 36.4027 25.8944 39.4997 23.4668C40.7798 22.4628 43.861 20.0343 48.7557 16.1781L68.5133 0.606092L68.529 0.600586L68.5447 0.606092C68.5505 0.609805 68.5549 0.615317 68.5572 0.621781C68.5592 0.627908 68.5592 0.634479 68.5572 0.640606L57.1112 23.3005H57.1175Z" fill="currentColor" />
+            <path d="M6.93747 75.9035C6.94375 75.9035 6.95002 75.9035 6.95316 75.8972L25.2863 61.5269C25.2945 61.5207 25.3011 61.5126 25.3055 61.5033C25.3099 61.494 25.3119 61.4838 25.3114 61.4735C25.3107 61.4632 25.3075 61.4533 25.302 61.4445C25.2965 61.4358 25.289 61.4285 25.28 61.4233C22.4655 59.659 19.7582 57.7291 17.1724 55.6438H17.1536L17.1379 55.6501C17.1324 55.6541 17.128 55.6595 17.1253 55.6658L6.91551 75.8627C6.91358 75.8688 6.91358 75.8754 6.91551 75.8815C6.91551 75.8878 6.91551 75.8941 6.92178 75.8972C6.92709 75.9015 6.93378 75.9037 6.94061 75.9035H6.93747Z" fill="currentColor" />
             <defs>
               <linearGradient id="paint0_linear" x1="29.2545" y1="56.4384" x2="14.4089" y2="11.0992" gradientUnits="userSpaceOnUse">
                 <stop stopColor="#FDFFF8" />
@@ -82,7 +82,7 @@ export default function GenerateCase() {
   const [creatingAIJD, setCreatingAIJD] = useState<boolean>(false);
   const [enhancingAIJD, setEnhancingAIJD] = useState<boolean>(false);
   const [numCaseStudies, setNumCaseStudies] = useState(3);
-  const [includeCompanyBackground, setIncludeCompanyBackground] = useState(true);
+  const includeCompanyBackground = true; // Always include company background (no toggle)
 
   const [formData, setFormData] = useState({
     duration: 60,
@@ -90,17 +90,48 @@ export default function GenerateCase() {
     hours: 1,
     minutes: 0,
     contentLength: 'medium',
-    numQuestions: 7,
     difficultyLevel: 'medium',
     instructions: "",
     caseStudyType: "Analytical",
-    enablePsychometrics: false,
+    enablePsychometrics: true,
+    // Advanced modules are always enabled for case-study generated questions
+    enableAssessmentModules: true,
     psychometricTypes: {
       cognitiveAbility: false,
       personalityTraits: false,
       decisionMaking: false,
       problemSolving: false,
       leadershipPotential: false,
+    },
+    // NEW: Assessment Types (always enabled)
+    assessmentModules: {
+      mcq: false,
+      openEnded: false,
+      videoResponse: false,
+      codingChallenge: false,
+      sqlProblem: false,
+      excelTask: false,
+      writingExercise: false,
+      situationalJudgment: false,
+    },
+    moduleSettings: {
+      mcqCount: 5,
+      openEndedCount: 2,
+      videoResponseCount: 1,
+      codingChallengeCount: 1,
+      sqlProblemCount: 1,
+      excelTaskCount: 1,
+      writingExerciseCount: 1,
+      situationalJudgmentCount: 2,
+    },
+    // Anti-cheating settings
+    antiCheating: {
+      enableFullscreen: false,
+      enableTabSwitch: false,
+      enableCopyPaste: false,
+      enableWebcamProctoring: false,
+      webcam_snapshots_interval: 0,
+      maxTabSwitches: 3,
     }
   });
 
@@ -307,19 +338,7 @@ export default function GenerateCase() {
     setUploadedLinks(uploadedLinks.filter(link => link.id !== linkId));
   };
 
-  const handleTogglePsychometrics = (enabled) => {
-    setFormData(prev => ({
-      ...prev,
-      enablePsychometrics: enabled,
-      psychometricTypes: enabled ? prev.psychometricTypes : {
-        cognitiveAbility: false,
-        personalityTraits: false,
-        decisionMaking: false,
-        problemSolving: false,
-        leadershipPotential: false,
-      }
-    }));
-  };
+
 
   const handleTogglePsychometricType = (typeId) => {
     setFormData(prev => ({
@@ -327,6 +346,54 @@ export default function GenerateCase() {
       psychometricTypes: {
         ...prev.psychometricTypes,
         [typeId]: !prev.psychometricTypes[typeId]
+      }
+    }));
+  };
+
+  // NEW: Toggle assessment types
+  const handleToggleAssessmentModules = (enabled) => {
+    setFormData(prev => ({
+      ...prev,
+      enableAssessmentModules: enabled,
+      assessmentModules: enabled ? prev.assessmentModules : {
+        mcq: false,
+        openEnded: false,
+        videoResponse: false,
+        codingChallenge: false,
+        sqlProblem: false,
+        excelTask: false,
+        writingExercise: false,
+        situationalJudgment: false,
+      }
+    }));
+  };
+
+  const handleToggleAssessmentModule = (moduleId) => {
+    setFormData(prev => ({
+      ...prev,
+      assessmentModules: {
+        ...prev.assessmentModules,
+        [moduleId]: !prev.assessmentModules[moduleId]
+      }
+    }));
+  };
+
+  const handleModuleSettingChange = (settingId, value) => {
+    setFormData(prev => ({
+      ...prev,
+      moduleSettings: {
+        ...prev.moduleSettings,
+        [settingId]: value
+      }
+    }));
+  };
+
+  const handleAntiCheatingSetting = (settingId, value) => {
+    setFormData(prev => ({
+      ...prev,
+      antiCheating: {
+        ...prev.antiCheating,
+        [settingId]: value
       }
     }));
   };
@@ -350,6 +417,18 @@ export default function GenerateCase() {
       return;
     }
 
+    // Validate that at least one assessment module is selected and has positive counts
+    const selectedModulesForValidation = Object.keys(formData.assessmentModules).filter(k => formData.assessmentModules[k]);
+    const totalModuleQuestions = selectedModulesForValidation.reduce((acc, m) => acc + (parseInt(formData.moduleSettings[`${m}Count`]) || 0), 0);
+    if (selectedModulesForValidation.length === 0 || totalModuleQuestions === 0) {
+      toast({
+        variant: "destructive",
+        title: i18n.language === 'ar' ? "خطأ" : "Error",
+        description: i18n.language === 'ar' ? "اختر وحدة تقييم على الأقل وحدد عدد الأسئلة" : "Select at least one assessment module and specify question counts",
+      });
+      return;
+    }
+
     setLoading(true);
     try {
       const formDataToSend = new FormData();
@@ -368,14 +447,15 @@ export default function GenerateCase() {
 
       formDataToSend.append('duration', formData.duration.toString());
       formDataToSend.append('contentLength', formData.contentLength);
-      formDataToSend.append('numQuestions', formData.numQuestions.toString());
       formDataToSend.append('difficultyLevel', formData.difficultyLevel);
       formDataToSend.append('instructions', formData.instructions);
       formDataToSend.append('numCaseStudies', numCaseStudies.toString());
 
+
+
       const apiCaseStudyType = caseStudyTypeMap[formData.caseStudyType] || 'scenario';
       formDataToSend.append('caseStudyType', apiCaseStudyType);
-      formDataToSend.append('includeCompanyBackground', includeCompanyBackground ? 'true' : 'false');
+      formDataToSend.append('includeCompanyBackground', 'true');
       // Add psychometrics
       if (formData.enablePsychometrics) {
         const selectedPsychometrics = Object.keys(formData.psychometricTypes)
@@ -385,6 +465,23 @@ export default function GenerateCase() {
       } else {
         formDataToSend.append('enablePsychometrics', 'false');
       }
+
+      // NEW: Add assessment types (always enabled)
+      // Send deduped module list and sanitized numeric module settings
+      const selectedModules = Object.keys(formData.assessmentModules)
+        .filter(key => formData.assessmentModules[key]);
+      const dedupedModules = Array.from(new Set(selectedModules));
+      formDataToSend.append('enableAssessmentModules', 'true');
+      formDataToSend.append('assessmentModules', JSON.stringify(dedupedModules));
+
+      const sanitizedModuleSettings = {};
+      Object.keys(formData.moduleSettings || {}).forEach(k => {
+        sanitizedModuleSettings[k] = parseInt(formData.moduleSettings[k], 10) || 0;
+      });
+      formDataToSend.append('moduleSettings', JSON.stringify(sanitizedModuleSettings));
+
+      // Add anti-cheating settings independently
+      formDataToSend.append('antiCheating', JSON.stringify(formData.antiCheating));
 
       // Add links
       if (uploadedLinks.length > 0) {
@@ -441,7 +538,7 @@ export default function GenerateCase() {
       <div className="min-h-screen bg-gray-50 flex flex-col">
         <TopBar />
         <div className="flex items-center justify-center flex-1">
-          <Loader2 className="w-8 h-8 animate-spin text-[#75A400]" />
+          <Loader2 className="w-8 h-8 animate-spin text-merit-green" />
           <span className="ml-2 text-gray-600">
             {i18n.language === 'ar' ? 'جاري تحميل الوظائف...' : 'Loading jobs...'}
           </span>
@@ -472,7 +569,7 @@ export default function GenerateCase() {
               <div className="flex items-center justify-between">
                 <div>
                   <h1 className="text-3xl md:text-4xl font-bold text-merit-dark flex items-center gap-3 mb-2">
-                    <Sparkles className="w-8 h-8 text-[#75A400]" />
+                    <FileText className="w-8 h-8 text-[#75A400]" />
                     {i18n.language === 'ar' ? 'إنشاء دراسة حالة' : 'Generate Case Study'}
                   </h1>
                   <p className="text-gray-600">
@@ -481,7 +578,7 @@ export default function GenerateCase() {
                       : 'Create unique AI-driven case studies with custom settings'}
                   </p>
                 </div>
-                <div className="h-1 w-40 bg-gradient-to-r from-[#C8F55A] to-[#75A400] rounded-full hidden md:block"></div>
+                <div className="h-1 w-40 bg-gradient-to-r from-merit-green/30 to-merit-green rounded-full hidden md:block"></div>
               </div>
             </div>
 
@@ -507,7 +604,7 @@ export default function GenerateCase() {
                       <select
                         value={selectedJob}
                         onChange={(e) => setSelectedJob(e.target.value)}
-                        className="w-full border-2 border-gray-300 rounded-lg px-4 py-3 focus:border-[#C8F55A] focus:ring-2 focus:ring-[#C8F55A]/20 focus:outline-none transition-all text-gray-900 font-medium"
+                        className="w-full border-2 border-gray-300 rounded-lg px-4 py-3 focus:border-merit-green focus:ring-2 focus:ring-merit-green/20 focus:outline-none transition-all text-gray-900 font-medium"
                         disabled={!!urlJobId}
                         required
                       >
@@ -535,7 +632,7 @@ export default function GenerateCase() {
                           value={jobDescriptionText}
                           onChange={(e) => setJobDescriptionText(e.target.value)}
                           placeholder={i18n.language === 'ar' ? 'ألصق وصف الوظيفة هنا...' : 'Paste the job description here...'}
-                          className="w-full border-2 border-gray-300 rounded-lg px-4 py-3 focus:border-[#C8F55A] focus:ring-2 focus:ring-[#C8F55A]/20 focus:outline-none transition-all text-gray-900 font-medium"
+                          className="w-full border-2 border-gray-300 rounded-lg px-4 py-3 focus:border-merit-green focus:ring-2 focus:ring-merit-green/20 focus:outline-none transition-all text-gray-900 font-medium"
                         />
                         <p className="text-xs text-gray-500 mt-1">
                           {i18n.language === 'ar' ? 'يمكنك أيضاً الرفع أو الإنشاء بالذكاء الاصطناعي' : 'You can also upload a file or create with AI'}
@@ -545,7 +642,7 @@ export default function GenerateCase() {
                       {/* AI Enhancement Section */}
                       <div className="mb-6 bg-gradient-to-r from-emerald-50 to-lime-50 border border-lime-200 rounded-xl p-4">
                         <div className="flex items-center gap-2 mb-3">
-                          <Sparkles className="w-5 h-5 text-[#75A400]" />
+                          <Sparkles className="w-5 h-5 text-merit-green" />
                           <span className="text-sm font-semibold text-gray-900">
                             {i18n.language === 'ar' ? 'تحسين وصف الوظيفة بالذكاء الاصطناعي' : 'Enhance Job Description with AI'}
                           </span>
@@ -703,7 +800,7 @@ export default function GenerateCase() {
                         type="button"
                         onClick={() => setNumCaseStudies(num)}
                         className={`py-4 px-6 rounded-lg font-semibold transition-all duration-200 border-2 flex flex-col items-center justify-center gap-2 ${numCaseStudies === num
-                            ? 'bg-[#C8F55A] border-[#75A400] text-merit-dark shadow-lg'
+                            ? 'bg-merit-green text-merit-dark shadow-lg'
                             : 'border-gray-300 text-gray-700 hover:border-[#C8F55A] bg-white'
                           }`}
                       >
@@ -750,7 +847,7 @@ export default function GenerateCase() {
                       <select
                         value={formData.caseStudyType}
                         onChange={(e) => setFormData({ ...formData, caseStudyType: e.target.value })}
-                        className="w-full border-2 border-gray-300 rounded-lg px-4 py-3 focus:border-[#C8F55A] focus:ring-2 focus:ring-[#C8F55A]/20 focus:outline-none transition-all text-gray-900 font-medium"
+                        className="w-full border-2 border-gray-300 rounded-lg px-4 py-3 focus:border-merit-green focus:ring-2 focus:ring-merit-green/20 focus:outline-none transition-all text-gray-900 font-medium"
                       >
                         <option value="Analytical">Analytical</option>
                         <option value="Scenario-Based">Scenario-Based</option>
@@ -835,10 +932,149 @@ export default function GenerateCase() {
                   </div>
                 </div>
 
-                {/* Section 3: Content Settings */}
+                {/* Section 3: Questions & Advanced Modules */}
                 <div className="pb-8 border-b border-gray-200">
                   <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center gap-2">
                     <span className="w-8 h-8 bg-[#C8F55A] rounded-full flex items-center justify-center text-merit-dark font-bold text-sm">3</span>
+                    {i18n.language === 'ar' ? 'الأسئلة' : 'Questions'}
+                  </h2>
+
+                    <div className="mb-4">
+                    <p className="text-sm text-gray-600">
+                      {i18n.language === 'ar' ? 'ستُبنى جميع الأسئلة من أنواع التقييم المختارة.' : 'All case study questions will be built from selected assessment types.'}
+                    </p>
+                    {/* Show recommendation when psychometrics are selected */}
+                    {selectedPsychometricCount > 0 && (
+                      <div className="mt-3 p-3 bg-purple-50 border border-purple-200 rounded-lg">
+                        <p className="text-sm text-purple-800">
+                          <strong>🧠 {i18n.language === 'ar' ? 'موصى به للتقييم النفسي:' : 'Recommended for Psychometric Assessment:'}</strong>
+                          {' '}
+                          {i18n.language === 'ar'
+                            ? 'للحصول على أفضل تقييم للسمات الشخصية، يُنصح باختيار "الأسئلة المفتوحة" و"اختبارات الحكم الموقفي" و"استجابات الفيديو".'
+                            : 'For best personality trait assessment, select "Open-Ended Questions", "Situational Judgment", and "Video Responses".'}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="bg-merit-green/10 border border-merit-green/30 rounded-xl p-6 space-y-6">
+                    <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                      <div className="flex items-start gap-3">
+                        <div className="w-10 h-10 rounded-lg bg-merit-green flex items-center justify-center text-merit-dark">
+                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+                          </svg>
+                        </div>
+                        <div>
+                          <h3 className="text-lg font-semibold text-gray-900">
+                            {i18n.language === 'ar' ? 'أنواع التقييم' : 'Assessment Types'}
+                          </h3>
+                          <p className="text-sm text-gray-600">
+                            {i18n.language === 'ar'
+                              ? 'أضف أسئلة متعددة الخيارات، تحديات برمجية، مهام SQL/Excel، واستجابات فيديو'
+                              : 'Add MCQ questions, coding challenges, SQL/Excel tasks, video responses & more'}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="transition-opacity opacity-100">
+                      <div className="flex items-center justify-between mb-3">
+                        <h4 className="text-sm font-semibold text-gray-800">
+                          {i18n.language === 'ar' ? 'اختر أنواع الأسئلة' : 'Select Question Types'}
+                        </h4>
+                        <span className="text-xs font-semibold text-gray-600">
+                          {i18n.language === 'ar'
+                            ? `${Object.values(formData.assessmentModules).filter(Boolean).length} من 8 خيارات`
+                            : `${Object.values(formData.assessmentModules).filter(Boolean).length} of 8 selected`}
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-6">
+                        {[
+                          { id: 'mcq', label: i18n.language === 'ar' ? 'أسئلة اختيار متعدد' : 'Multiple Choice Questions', desc: i18n.language === 'ar' ? 'أسئلة مع خيارات إجابة محددة' : 'Questions with predefined answer options', icon: '📝', countKey: 'mcqCount', psychometricRecommended: true },
+                          { id: 'openEnded', label: i18n.language === 'ar' ? 'أسئلة مفتوحة' : 'Open-Ended Questions', desc: i18n.language === 'ar' ? 'إجابات نصية حرة مع تحليل AI' : 'Free-text answers with AI analysis', icon: '✍️', countKey: 'openEndedCount', psychometricRecommended: true },
+                          { id: 'videoResponse', label: i18n.language === 'ar' ? 'استجابات فيديو' : 'Video Responses', desc: i18n.language === 'ar' ? 'تسجيل فيديو للإجابات' : 'Recorded video answers from candidates', icon: '🎥', countKey: 'videoResponseCount', psychometricRecommended: true },
+                          { id: 'codingChallenge', label: i18n.language === 'ar' ? 'تحديات برمجية' : 'Coding Challenges', desc: i18n.language === 'ar' ? 'مشاكل برمجة مع اختبارات تلقائية' : 'Programming problems with auto-testing', icon: '💻', countKey: 'codingChallengeCount', psychometricRecommended: false },
+                          { id: 'sqlProblem', label: i18n.language === 'ar' ? 'مهام SQL' : 'SQL Problems', desc: i18n.language === 'ar' ? 'استعلامات قواعد البيانات' : 'Database query challenges', icon: '🗄️', countKey: 'sqlProblemCount', psychometricRecommended: false },
+                          { id: 'excelTask', label: i18n.language === 'ar' ? 'مهام Excel' : 'Excel/Spreadsheet Tasks', desc: i18n.language === 'ar' ? 'تحليل البيانات والصيغ' : 'Data analysis and formula tasks', icon: '📊', countKey: 'excelTaskCount', psychometricRecommended: false },
+                          { id: 'writingExercise', label: i18n.language === 'ar' ? 'تمارين الكتابة' : 'Writing Exercises', desc: i18n.language === 'ar' ? 'مقالات وتقارير ورسائل مهنية' : 'Essays, reports, and professional writing', icon: '📄', countKey: 'writingExerciseCount', psychometricRecommended: false },
+                          { id: 'situationalJudgment', label: i18n.language === 'ar' ? 'اختبارات الحكم الموقفي' : 'Situational Judgment', desc: i18n.language === 'ar' ? 'سيناريوهات عملية واختيارات' : 'Workplace scenarios and decision-making', icon: '🎯', countKey: 'situationalJudgmentCount', psychometricRecommended: true },
+                        ].map((module) => {
+                          const isPsychoRecommended = selectedPsychometricCount > 0 && module.psychometricRecommended;
+                          return (
+                          <div
+                            key={module.id}
+                            className={`p-4 rounded-xl border-2 transition-all duration-200 ${formData.assessmentModules[module.id]
+                                ? 'border-merit-green bg-merit-green/10 shadow-md'
+                                : isPsychoRecommended
+                                  ? 'border-purple-300 bg-purple-50 hover:border-purple-400'
+                                  : 'border-gray-200 bg-white hover:border-merit-green'
+                              } ${!formData.enableAssessmentModules ? 'cursor-not-allowed opacity-70' : ''}`}
+                          >
+                            {isPsychoRecommended && !formData.assessmentModules[module.id] && (
+                              <div className="text-xs text-purple-600 font-medium mb-2 flex items-center gap-1">
+                                <span>🧠</span>
+                                {i18n.language === 'ar' ? 'موصى به للتقييم النفسي' : 'Recommended for Psychometrics'}
+                              </div>
+                            )}
+<button
+                            type="button"
+                            onClick={() => handleToggleAssessmentModule(module.id)}
+                            disabled={!formData.enableAssessmentModules}
+                            className="w-full text-left flex items-start justify-between gap-2 mb-3"
+                          >
+                            <div className="flex items-center gap-2">
+                              <span className="text-xl">{module.icon}</span>
+                              <div>
+                                <p className="font-semibold text-sm text-gray-900">{module.label}</p>
+                                <p className="text-xs text-gray-500 mt-1">{module.desc}</p>
+                              </div>
+                            </div>
+                            <span className={`w-5 h-5 rounded-full border flex items-center justify-center text-[10px] font-bold flex-shrink-0 ${formData.assessmentModules[module.id]
+                                ? 'bg-merit-green text-white border-merit-green'
+                                : 'border-gray-300 text-gray-500'
+                              }`}
+                            >
+                              {formData.assessmentModules[module.id] ? '✓' : ''}
+                            </span>
+                          </button>
+                            
+                            {/* Settings for selected modules */}
+                            {formData.assessmentModules[module.id] && formData.enableAssessmentModules && (
+                              <div className="mt-3 pt-3 border-t border-merit-green/30 grid grid-cols-1 gap-2">
+                                <div>
+                                  <label className="text-xs text-gray-600 block mb-1">
+                                    {i18n.language === 'ar' ? 'العدد' : 'Count'}
+                                  </label>
+                                  <input
+                                    type="number"
+                                    min="1"
+                                    max="10"
+                                    value={formData.moduleSettings[module.countKey]}
+                                    onChange={(e) => handleModuleSettingChange(module.countKey, parseInt(e.target.value) || 1)}
+                                    onClick={(e) => e.stopPropagation()}
+                                    onFocus={(e) => e.stopPropagation()}
+                                    className="w-full border border-gray-300 rounded px-2 py-1 text-sm focus:border-merit-green focus:outline-none"
+                                  />
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                        })}
+                      </div>
+
+                    </div>
+
+
+                  </div>
+                </div>
+
+                {/* Section 4: Content Settings */}
+                <div className="pb-8 border-b border-gray-200">
+                  <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center gap-2">
+                    <span className="w-8 h-8 bg-[#C8F55A] rounded-full flex items-center justify-center text-merit-dark font-bold text-sm">4</span>
                     {i18n.language === 'ar' ? 'إعدادات المحتوى' : 'Content Settings'}
                   </h2>
 
@@ -868,28 +1104,6 @@ export default function GenerateCase() {
                     </div>
                   </div>
 
-                  <div className="mb-8">
-                    <label className="block text-sm font-semibold text-gray-700 mb-3">
-                      {i18n.language === 'ar' ? 'عدد الأسئلة' : 'Number of Questions'}
-                    </label>
-                    <div className="flex items-center gap-4">
-                      <input
-                        type="range"
-                        min="1"
-                        max="10"
-                        value={formData.numQuestions}
-                        onChange={(e) => setFormData({ ...formData, numQuestions: Number(e.target.value) })}
-                        className="flex-1 h-2 bg-gray-300 rounded-lg appearance-none cursor-pointer accent-[#C8F55A]"
-                      />
-                      <div className="w-12 h-12 bg-[#C8F55A] rounded-lg flex items-center justify-center font-bold text-merit-dark text-lg shadow-md">
-                        {formData.numQuestions}
-                      </div>
-                    </div>
-                    <div className="flex justify-between text-xs text-gray-500 mt-2">
-                      <span>1 {i18n.language === 'ar' ? 'سؤال' : 'Question'}</span>
-                      <span>10 {i18n.language === 'ar' ? 'أسئلة' : 'Questions'}</span>
-                    </div>
-                  </div>
 
                   <div>
                     <label className="block text-sm font-semibold text-gray-700 mb-3">
@@ -918,11 +1132,11 @@ export default function GenerateCase() {
                   </div>
                 </div>
 
-                {/* Section 4: Psychometric Assessments */}
+                {/* Section 5: Personality Assessments */}
                 <div className="pb-8 border-b border-gray-200">
                   <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center gap-2">
-                    <span className="w-8 h-8 bg-[#C8F55A] rounded-full flex items-center justify-center text-merit-dark font-bold text-sm">4</span>
-                    {i18n.language === 'ar' ? 'التقييمات السيكومترية' : 'Psychometric Assessments'}
+                    <span className="w-8 h-8 bg-[#C8F55A] rounded-full flex items-center justify-center text-merit-dark font-bold text-sm">5</span>
+                    {i18n.language === 'ar' ? 'تقييمات الشخصية' : 'Personality Assessments'}
                   </h2>
 
                   <div className="bg-gradient-to-r from-lime-50 via-white to-lime-100 border border-lime-200 rounded-xl p-6 space-y-6">
@@ -933,28 +1147,29 @@ export default function GenerateCase() {
                         </div>
                         <div>
                           <h3 className="text-lg font-semibold text-gray-900">
-                            {i18n.language === 'ar' ? 'تفعيل التقييمات السيكومترية' : 'Enable Psychometric Insights'}
+                            {i18n.language === 'ar' ? 'تفعيل تقييمات الشخصية' : 'Enable Personality Insights'}
                           </h3>
                           <p className="text-sm text-gray-600">
                             {i18n.language === 'ar'
-                              ? 'أضف تحليلات سيكومترية لتقييم المهارات الذهنية والسلوكية'
-                              : 'Add psychometric insights to evaluate cognitive and behavioural skills'}
+                              ? 'أضف تحليلات الشخصية لتقييم السمات والسلوكيات'
+                              : 'Add personality insights to evaluate cognitive and behavioural traits'}
                           </p>
                         </div>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => handleTogglePsychometrics(!formData.enablePsychometrics)}
-                        className={`px-6 py-3 rounded-lg font-semibold transition-all duration-200 flex items-center gap-2 ${formData.enablePsychometrics
-                            ? 'bg-merit-dark text-white hover:bg-merit-dark/90 shadow-lg'
-                            : 'bg-white border-2 border-gray-300 text-gray-700 hover:border-merit-dark'
-                          }`}
-                      >
-                        {formData.enablePsychometrics
-                          ? (i18n.language === 'ar' ? 'نشط' : 'Enabled')
-                          : (i18n.language === 'ar' ? 'غير نشط' : 'Enable')}
-                      </button>
+
                     </div>
+
+                    {/* Info box explaining that psychometrics are evaluated through module answers */}
+                    {selectedPsychometricCount > 0 && (
+                      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                        <p className="text-sm text-blue-800">
+                          <strong>{i18n.language === 'ar' ? '💡 ملاحظة: ' : '💡 Note: '}</strong>
+                          {i18n.language === 'ar'
+                            ? 'سيتم تقييم السمات الشخصية المحددة بناءً على إجابات المرشح على أنواع التقييم المختارة في القسم 3 (الأسئلة). تأكد من اختيار أنواع أسئلة مناسبة مثل الأسئلة المفتوحة واختبارات الحكم الموقفي للحصول على أفضل تقييم.'
+                            : 'Selected personality traits will be evaluated based on candidate responses to the assessment types chosen in Section 3 (Questions). For best results, include open-ended questions, situational judgment, or video responses.'}
+                        </p>
+                      </div>
+                    )}
 
                     <div className={`transition-opacity ${formData.enablePsychometrics ? 'opacity-100' : 'opacity-60'}`}>
                       <div className="flex items-center justify-between mb-3">
@@ -982,8 +1197,8 @@ export default function GenerateCase() {
                             onClick={() => handleTogglePsychometricType(option.id)}
                             disabled={!formData.enablePsychometrics}
                             className={`text-left p-4 rounded-xl border-2 transition-all duration-200 ${formData.psychometricTypes[option.id]
-                                ? 'border-merit-dark bg-white shadow-md'
-                                : 'border-gray-200 bg-white hover:border-merit-dark/40'
+                                ? 'border-merit-green bg-white shadow-md'
+                                : 'border-gray-200 bg-white hover:border-merit-green/40'
                               } ${!formData.enablePsychometrics ? 'cursor-not-allowed opacity-70' : ''}`}
                           >
                             <div className="flex items-center justify-between gap-2">
@@ -992,7 +1207,7 @@ export default function GenerateCase() {
                                 <p className="text-xs text-gray-500 mt-1">{option.desc}</p>
                               </div>
                               <span className={`w-5 h-5 rounded-full border flex items-center justify-center text-[10px] font-bold ${formData.psychometricTypes[option.id]
-                                  ? 'bg-merit-dark text-white border-merit-dark'
+                                  ? 'bg-merit-green text-white border-merit-green'
                                   : 'border-gray-300 text-gray-500'
                                 }`}
                               >
@@ -1004,20 +1219,121 @@ export default function GenerateCase() {
                       </div>
                     </div>
 
-                    {!formData.enablePsychometrics && (
-                      <p className="text-xs text-gray-500">
-                        {i18n.language === 'ar'
-                          ? 'فعّل التقييمات السيكومترية لتخصيص هذه الخيارات وتحسين نتائج الترشيح.'
-                          : 'Enable psychometrics to customise these options and enrich your shortlist outcomes.'}
-                      </p>
+
+
+
+                  </div>
+                </div>
+
+                {/* Section 6: Anti-Cheating Settings */}
+                <div className="pb-8 border-b border-gray-200">
+                  <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center gap-2">
+                    <span className="w-8 h-8 bg-[#C8F55A] rounded-full flex items-center justify-center text-merit-dark font-bold text-sm">6</span>
+                    {i18n.language === 'ar' ? 'إعدادات مكافحة الغش' : 'Anti-Cheating Settings'}
+                  </h2>
+
+                  <div className="bg-merit-green/10 border border-merit-green/30 rounded-xl p-6 space-y-4">
+                    <p className="text-sm text-gray-600">
+                      {i18n.language === 'ar'
+                        ? 'تحكم في ميزات منع الغش أثناء إجراء التقييمات.'
+                        : 'Control anti-cheating features for assessments.'}
+                    </p>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <label className="flex items-center gap-2 cursor-pointer p-2 rounded hover:bg-merit-green/20 transition-colors">
+                        <input
+                          type="checkbox"
+                          checked={formData.antiCheating.enableFullscreen}
+                          onChange={(e) => handleAntiCheatingSetting('enableFullscreen', e.target.checked)}
+                          className="w-4 h-4 rounded border-gray-300 text-merit-green focus:ring-merit-green"
+                        />
+                        <span className="text-sm text-gray-700">
+                          {i18n.language === 'ar' ? 'إلزام وضع ملء الشاشة' : 'Require Fullscreen Mode'}
+                        </span>
+                      </label>
+
+                      <label className="flex items-center gap-2 cursor-pointer p-2 rounded hover:bg-merit-green/20 transition-colors">
+                        <input
+                          type="checkbox"
+                          checked={formData.antiCheating.enableTabSwitch}
+                          onChange={(e) => handleAntiCheatingSetting('enableTabSwitch', e.target.checked)}
+                          className="w-4 h-4 rounded border-gray-300 text-merit-green focus:ring-merit-green"
+                        />
+                        <span className="text-sm text-gray-700">
+                          {i18n.language === 'ar' ? 'اكتشاف تبديل التبويبات' : 'Detect Tab Switching'}
+                        </span>
+                      </label>
+
+                      <label className="flex items-center gap-2 cursor-pointer p-2 rounded hover:bg-merit-green/20 transition-colors">
+                        <input
+                          type="checkbox"
+                          checked={formData.antiCheating.enableCopyPaste}
+                          onChange={(e) => handleAntiCheatingSetting('enableCopyPaste', e.target.checked)}
+                          className="w-4 h-4 rounded border-gray-300 text-merit-green focus:ring-merit-green"
+                        />
+                        <span className="text-sm text-gray-700">
+                          {i18n.language === 'ar' ? 'منع النسخ واللصق' : 'Block Copy/Paste'}
+                        </span>
+                      </label>
+
+
+
+                      <label className="flex items-center gap-2 cursor-pointer p-2 rounded hover:bg-merit-green/20 transition-colors">
+                        <input
+                          type="checkbox"
+                          checked={formData.antiCheating.enableWebcamProctoring}
+                          onChange={(e) => {
+                            handleAntiCheatingSetting('enableWebcamProctoring', e.target.checked);
+                            // If enabling webcam proctoring and no interval set, default to 30s
+                            if (e.target.checked && !formData.antiCheating.webcam_snapshots_interval) {
+                              handleAntiCheatingSetting('webcam_snapshots_interval', 30);
+                            }
+                          }}
+                          className="w-4 h-4 rounded border-gray-300 text-merit-green focus:ring-merit-green"
+                        />
+                        <span className="text-sm text-gray-700">
+                          {i18n.language === 'ar' ? 'مراقبة الكاميرا' : 'Webcam Proctoring'}
+                        </span>
+                      </label>
+
+                      {formData.antiCheating.enableWebcamProctoring && (
+                        <div className="mt-2 flex items-center gap-2">
+                          <label className="text-sm text-gray-600">
+                            {i18n.language === 'ar' ? 'فاصل لقطات الكاميرا (بالثواني):' : 'Snapshot interval (seconds):'}
+                          </label>
+                          <input
+                            type="number"
+                            min={5}
+                            value={formData.antiCheating.webcam_snapshots_interval || 30}
+                            onChange={(e) => handleAntiCheatingSetting('webcam_snapshots_interval', parseInt(e.target.value) || 30)}
+                            className="w-24 border border-gray-300 rounded px-2 py-1 text-sm"
+                          />
+                        </div>
+                      )}
+                    </div>
+
+                    {formData.antiCheating.enableTabSwitch && (
+                      <div className="mt-3 flex items-center gap-2">
+                        <label className="text-sm text-gray-600">
+                          {i18n.language === 'ar' ? 'الحد الأقصى لتبديل التبويبات:' : 'Max tab switches allowed:'}
+                        </label>
+                        <input
+                          type="number"
+                          min="1"
+                          max="10"
+                          value={formData.antiCheating.maxTabSwitches}
+                          onChange={(e) => handleAntiCheatingSetting('maxTabSwitches', parseInt(e.target.value) || 3)}
+                          className="w-16 border border-gray-300 rounded px-2 py-1 text-sm focus:border-merit-green focus:outline-none"
+                        />
+                      </div>
                     )}
                   </div>
                 </div>
 
-                {/* Section 5: Document Upload & Links */}
+                {/* Section 7: Document Upload & Links */}
                 <div className="pb-8 border-b border-gray-200">
                   <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center gap-2">
-                    <span className="w-8 h-8 bg-[#C8F55A] rounded-full flex items-center justify-center text-merit-dark font-bold text-sm">5</span>
+                    <span className="w-8 h-8 bg-[#C8F55A] rounded-full flex items-center justify-center text-merit-dark font-bold text-sm">7</span>
                     {i18n.language === 'ar' ? 'المستندات والروابط الإضافية' : 'Additional Documents & Links'}
                   </h2>
 
@@ -1185,39 +1501,12 @@ export default function GenerateCase() {
                   </div>
                 </div>
 
-                {/* Section 5b: Company Background Option */}
-                <div className="pb-8 border-b border-gray-200">
-                  <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center gap-2">
-                    <span className="w-8 h-8 bg-[#C8F55A] rounded-full flex items-center justify-center text-merit-dark font-bold text-sm">5b</span>
-                    {i18n.language === 'ar' ? 'خيارات إضافية' : 'Additional Options'}
-                  </h2>
 
-                  <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-xl p-6">
-                    <label className="flex items-center gap-3 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={includeCompanyBackground}
-                        onChange={(e) => setIncludeCompanyBackground(e.target.checked)}
-                        className="w-5 h-5 rounded border-2 border-gray-300 cursor-pointer accent-[#C8F55A]"
-                      />
-                      <div className="flex-1">
-                        <p className="text-sm font-semibold text-gray-900">
-                          {i18n.language === 'ar' ? 'تضمين خلفية الشركة' : 'Include Company Background'}
-                        </p>
-                        <p className="text-xs text-gray-600">
-                          {i18n.language === 'ar'
-                            ? 'استخرج وأضف معلومات خلفية عن الشركة من الوثائق والروابط'
-                            : 'Extract and include company background info from documents and links'}
-                        </p>
-                      </div>
-                    </label>
-                  </div>
-                </div>
 
-                {/* Section 6: Special Instructions */}
+                {/* Section 8: Special Instructions */}
                 <div className="pb-8">
                   <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center gap-2">
-                    <span className="w-8 h-8 bg-[#C8F55A] rounded-full flex items-center justify-center text-merit-dark font-bold text-sm">6</span>
+                    <span className="w-8 h-8 bg-[#C8F55A] rounded-full flex items-center justify-center text-merit-dark font-bold text-sm">8</span>
                     {i18n.language === 'ar' ? 'تعليمات خاصة' : 'Special Instructions'}
                   </h2>
 
@@ -1297,7 +1586,7 @@ export default function GenerateCase() {
                   </li>
                   <li className="flex gap-2">
                     <span>✓</span>
-                    <span>{i18n.language === 'ar' ? 'ستحصل على 3 خيارات مختلفة للاختيار من بينها' : 'You\'ll receive 3 different options to choose from'}</span>
+                    <span>{i18n.language === 'ar' ? 'ستحصل على 3 خيارات مختلفة للاختيار من بينها' : 'You\'ll receive different options to choose from'}</span>
                   </li>
                 </ul>
               </div>

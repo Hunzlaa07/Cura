@@ -10,7 +10,7 @@ export default function Login() {
   const isRTL = i18n.language === 'ar';
   
   const [formData, setFormData] = useState({ email: "", password: "" });
-  const [userType, setUserType] = useState<'applicant' | 'recruiter'>('applicant');
+  const [userType, setUserType] = useState<'applicant' | 'recruiter'>('recruiter');
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const { toast } = useToast();
@@ -257,17 +257,7 @@ export default function Login() {
               )}
             </AnimatePresence>
 
-            {/* Footer */}
-            <div className="text-center text-gray-600 text-sm">
-              {t('login.noAccount')}{" "}
-              <motion.a
-                href="/signup"
-                className="text-black font-semibold hover:text-[#B4E24C] transition-colors cursor-pointer"
-                whileHover={{ scale: 1.05 }}
-              >
-                {t('login.signUpNow')}
-              </motion.a>
-            </div>
+
           </div>
         </motion.div>
 

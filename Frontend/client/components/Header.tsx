@@ -75,15 +75,8 @@ export default function Header() {
 
             {/* Login Button */}
             <Link to="/login">
-              <Button variant="ghost" className="hidden sm:inline-flex text-merit-gray hover:text-merit-dark">
-                {t('header.login')}
-              </Button>
-            </Link>
-
-            {/* Sign Up Button */}
-            <Link to="/signup">
               <Button className="bg-merit-dark text-white hover:bg-merit-dark/90 px-6">
-                {t('header.signup')}
+                {t('header.login')}
               </Button>
             </Link>
           </div>
