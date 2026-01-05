@@ -4,6 +4,36 @@ const OpenAI = require("openai");
 const axios = require("axios");
 require("dotenv").config();
 
+const fs = require('fs');
+const path = require('path');
+
+function ensureLogsDir() {
+  const dir = path.join(__dirname, '..', 'logs');
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+function sanitizeForLogging(text) {
+  if (!text || typeof text !== 'string') return '';
+  // Remove emails
+  let s = text.replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, '[EMAIL]');
+  // Remove sequences of digits longer than 6 (possible phone numbers or ids)
+  s = s.replace(/\d{7,}/g, '[REDACTED_NUM]');
+  // Collapse whitespace and truncate to 10000 chars for logs
+  s = s.replace(/\s+/g, ' ').trim();
+  return s.substring(0, 10000);
+}
+
+function appendLog(filename, obj) {
+  try {
+    const dir = ensureLogsDir();
+    const p = path.join(dir, filename);
+    fs.appendFileSync(p, JSON.stringify(obj) + '\n');
+  } catch (e) {
+    console.warn('Could not write AI log:', e.message);
+  }
+}
+
 class AIService {
   constructor() {
     this.provider = process.env.AI_PROVIDER || 'openai';
@@ -139,6 +169,9 @@ class AIService {
    * Generate with Google Gemini
    */
   async generateWithGemini(prompt) {
+    const sanitized = sanitizeForLogging(prompt);
+    appendLog('ai_prompts.log', { provider: 'gemini', timestamp: Date.now(), prompt: sanitized });
+
     const model = this.gemini.getGenerativeModel({ 
       model: this.models.gemini 
     });
@@ -150,7 +183,8 @@ class AIService {
     if (response.startsWith('```')) {
       response = response.replace(/```json|```/g, '').trim();
     }
-    
+
+    appendLog('ai_responses.log', { provider: 'gemini', timestamp: Date.now(), length: response.length, response: sanitizeForLogging(response) });
     return response;
   }
 
@@ -158,12 +192,17 @@ class AIService {
    * Generate with OpenAI (Premium GPT-4o)
    */
   async generateWithOpenAI(prompt) {
+    // Log the sanitized prompt for debugging (no PII)
+    const sanitizedPrompt = sanitizeForLogging(prompt);
+    appendLog('ai_prompts.log', { provider: 'openai', timestamp: Date.now(), prompt: sanitizedPrompt });
+    console.log('   📨 Prompt (sanitized, first 1000 chars):', sanitizedPrompt.substring(0, 1000));
+
     const completion = await this.openai.chat.completions.create({
       model: this.models.openai,
       messages: [
         {
           role: "system",
-          content: "You are an expert HR analyst and technical recruiter. Return ONLY valid JSON. No markdown, no explanations. Escape all special characters properly. Use \\n for newlines inside strings, not literal newlines."
+          content: "You are an expert HR analyst and technical recruiter. Return ONLY valid JSON. No markdown, no explanations. Escape all special characters properly. Use \\n for newlines inside strings, not literal newlines. Ensure both 'en' and 'ar' sections are provided and are complete translations of one another."
         },
         {
           role: "user",
@@ -180,7 +219,11 @@ class AIService {
     if (response.startsWith('```')) {
       response = response.replace(/```json|```/g, '').trim();
     }
-    
+
+    // Log the raw (sanitized) response for debugging
+    appendLog('ai_responses.log', { provider: 'openai', timestamp: Date.now(), length: response.length, response: sanitizeForLogging(response) });
+    console.log('   ✅ AI response received (sanitized length):', sanitizeForLogging(response).length);
+
     return response;
   }
 
@@ -188,6 +231,9 @@ class AIService {
    * Generate with DeepSeek
    */
   async generateWithDeepSeek(prompt) {
+    const sanitizedPrompt = sanitizeForLogging(prompt);
+    appendLog('ai_prompts.log', { provider: 'deepseek', timestamp: Date.now(), prompt: sanitizedPrompt });
+
     const response = await axios.post(
       'https://api.deepseek.com/v1/chat/completions',
       {
@@ -195,7 +241,7 @@ class AIService {
         messages: [
           {
             role: "system",
-            content: "You are an expert HR analyst and technical recruiter. Return ONLY valid JSON. No markdown, no explanations. Escape all special characters properly. Use \\n for newlines inside strings, not literal newlines."
+            content: "You are an expert HR analyst and technical recruiter. Return ONLY valid JSON. No markdown, no explanations. Escape all special characters properly. Use \\n for newlines inside strings, not literal newlines. Ensure both 'en' and 'ar' sections are provided."
           },
           {
             role: "user",
@@ -219,7 +265,9 @@ class AIService {
     if (text.startsWith('```')) {
       text = text.replace(/```json|```/g, '').trim();
     }
-    
+
+    appendLog('ai_responses.log', { provider: 'deepseek', timestamp: Date.now(), length: text.length, response: sanitizeForLogging(text) });
+
     return text;
   }
 

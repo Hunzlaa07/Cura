@@ -32,6 +32,13 @@ router.post(
   bulkCVController.uploadCVsLocal
 );
 
+// Upload from public link (MVP)
+router.post(
+  '/upload-from-link',
+  authMiddleware,
+  bulkCVController.uploadCVsFromLink
+);
+
 router.get(
   '/status/:bulkJobId',
   authMiddleware,

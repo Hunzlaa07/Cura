@@ -166,9 +166,21 @@ GENERAL BUSINESS SPECIFICS:
 /**
  * STEP 3: Generate adaptive prompt for AI
  */
-function generateAdaptiveStructuredPrompt(job, duration, instructions, variantNumber, caseStudyType, documentContext, wordCountTarget, numQuestions, difficultyLevel) {
+function generateAdaptiveStructuredPrompt(job, duration, instructions, variantNumber, caseStudyType, documentContext, wordCountTarget, numQuestions, difficultyLevel, selectedModules = [], moduleSettings = {}) {
   
   const jobContext = analyzeJobContext(job);
+  
+  // Build module summary instructions if modules are provided
+  let moduleSummaryText = '';
+  if (selectedModules && selectedModules.length > 0) {
+    const parts = selectedModules.map(m => {
+      const key = `${m}Count`;
+      const cnt = (moduleSettings && (moduleSettings[key] || moduleSettings[key] === 0)) ? moduleSettings[key] : 0;
+      return `${m}: ${cnt}`;
+    });
+    moduleSummaryText = `\n- Module Breakdown: ${parts.join(', ')}`;
+    moduleSummaryText += `\n\nMODULE INSTRUCTIONS: For each selected module, generate the specified number of questions tied to the case study scenario. Annotate each question with its module type and provide module-specific metadata (e.g., MCQs must have 4 options and one correct answer; coding challenges must include test cases and sample input/output; video responses must include time limits and evaluation criteria). Ensure the overall number of questions matches the module breakdown.`;
+  }
   
   // Use "Company XYZ" as default if no actual company name is provided
   const companyName = job.company_name && job.company_name.trim() ? job.company_name.trim() : 'Company XYZ';
@@ -215,6 +227,27 @@ CASE STUDY TYPE: ${caseStudyType.toUpperCase()}
     hard: 'Create complex scenarios with competing priorities, incomplete information, and significant trade-offs. Require strategic thinking and nuanced decision-making.'
   };
 
+  // Compute module breakdown and question totals if modules are provided
+  let moduleParts = [];
+  let totalQuestionsFromModules = 0;
+  if (selectedModules && selectedModules.length > 0) {
+    moduleParts = selectedModules.map(m => {
+      const key = `${m}Count`;
+      const cnt = (moduleSettings && (typeof moduleSettings[key] !== 'undefined')) ? moduleSettings[key] : 0;
+      totalQuestionsFromModules += Number(cnt || 0);
+      return `${m}: ${cnt}`;
+    });
+  }
+
+  // Only include module breakdown in prompts; legacy 'Questions' field removed
+  const questionParamText = (moduleParts.length > 0)
+    ? `- Modules: ${moduleParts.join(', ')}`
+    : ``;
+
+  const questionsChecklistText = (moduleParts.length > 0)
+    ? `✓ Modules selected: ${moduleParts.join(', ')} (total ${totalQuestionsFromModules} questions). Ensure generated questions match these counts.`
+    : ``;
+
   const promptTemplate = `
 ${contextualInstructions}
 
@@ -228,13 +261,16 @@ CASE STUDY PARAMETERS:
 - Difficulty: ${difficultyLevel} - ${difficultyGuide[difficultyLevel]}
 - Duration: ${duration} minutes
 - Target Length: ${wordCountTarget} words
-- Questions: ${numQuestions}
+${questionParamText}
+${moduleSummaryText}
 
 ${documentContext ? `\nORGANIZATION CONTEXT:\n${documentContext}` : ''}
 
 ===== CRITICAL NARRATIVE SEQUENCE =====
 
 The case study MUST follow this exact structure:
+
+IMPORTANT: If a COMPANY BACKGROUND block is provided in the ORGANIZATION CONTEXT above, you MUST use the EXACT company name found there. The description MUST begin with the company name (for example: "Acme Corp is a ..."). Do NOT use the placeholder 'Company XYZ' when the actual company name is available in the context. If the company name cannot be determined from the provided content, do not invent one — instead start descriptions with 'The company' (avoid using 'Company XYZ' placeholder in that case).
 
 PART 1 - BACKGROUND (description field):
 1. COMPANY OVERVIEW (1-2 sentences):
@@ -342,7 +378,9 @@ PART 2 - INSTRUCTIONS (instructions field):
   "duration_minutes": ${duration || 120}
   "case_study_type": "${caseStudyType}",
   "difficulty_level": "${difficultyLevel}",
-  "num_questions": ${numQuestions},
+  "num_questions": ${moduleParts.length > 0 ? totalQuestionsFromModules : 0},
+  "module_breakdown": ${moduleParts.length > 0 ? JSON.stringify(moduleSettings) : null},
+  "module_breakdown": ${moduleParts.length > 0 ? JSON.stringify(moduleSettings) : null},
   "content_length": "${wordCountTarget}",
   "variant_number": ${variantNumber},
   "variant_focus": "${variantFocus.angle}",
@@ -369,7 +407,7 @@ PART 2 - INSTRUCTIONS (instructions field):
 ✓ All content is specific to ${job.title} role
 ✓ Industry terminology used: ${jobContext.industry}
 ✓ Appropriate seniority level: ${jobContext.seniority}
-✓ ${numQuestions} specific questions included
+${questionsChecklistText}
 ✓ All questions reference specific scenario details
 ✓ Tables have realistic, industry-appropriate data
 ✓ Variant ${variantNumber} focus embedded in scenario
@@ -379,6 +417,12 @@ PART 2 - INSTRUCTIONS (instructions field):
 ✓ Both sections are cohesive and interconnected
 ✓ Both English and Arabic sections complete
 ✓ Metrics are realistic for ${jobContext.industry} industry
+
+===== MANDATORY BILINGUAL REQUIREMENTS =====
+- BOTH 'en' AND 'ar' SECTIONS MUST BE PRESENT AND FULLY POPULATED.
+- The 'ar' section MUST be a proper Arabic translation of the corresponding 'en' fields (questions arrays and tables MUST match lengths and structure).
+- DO NOT RETURN PARTIAL ARABIC TRANSLATIONS. If Arabic cannot be provided, include a top-level 'error' field with value 'MISSING_AR'.
+- RETURN ONLY VALID JSON. NO MARKDOWN, NO EXPLANATIONS.
 
 `;
 

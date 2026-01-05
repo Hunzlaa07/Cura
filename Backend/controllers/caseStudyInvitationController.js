@@ -689,6 +689,7 @@ exports.loginWithTempCredentials = async (req, res) => {
           invitation_id: invitation.id,
           case_study_id: invitation.case_study_id,
           job_id: invitation.job_id,
+          job_application_id: invitation.job_application_id, // For proctoring tracking
           case_study_title: invitation.case_study_title,
           job_title: invitation.job_title,
           applicant_name: invitation.applicant_name,

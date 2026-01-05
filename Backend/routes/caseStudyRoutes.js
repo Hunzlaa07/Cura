@@ -10,7 +10,35 @@ require("dotenv").config();
 const authMiddleware = require("../middlewares/authMiddleware");
 const languageMiddleware = require("../middlewares/languageMiddleware");
 const aiService = require('../services/aiService');
+const translationService = require('../services/translationService');
+const fs = require('fs');
+const path = require('path');
 const { generateAdaptiveStructuredPrompt } = require('../services/universalCaseStudyGenerator');
+const { generateAssessmentModules, MODULE_CONFIGS } = require('../services/assessmentModuleGenerator');
+
+// Simple logging helpers for AI traces (no PII)
+function ensureLogsDir() {
+  const dir = path.join(__dirname, '..', 'logs');
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+function sanitizeForLogging(text) {
+  if (!text || typeof text !== 'string') return '';
+  let s = text.replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, '[EMAIL]');
+  s = s.replace(/\d{7,}/g, '[REDACTED_NUM]');
+  s = s.replace(/\s+/g, ' ').trim();
+  return s.substring(0, 20000);
+}
+function appendAiLog(eventType, payload) {
+  try {
+    const dir = ensureLogsDir();
+    const p = path.join(dir, 'ai_generation_trace.log');
+    const obj = Object.assign({ eventType, ts: Date.now() }, payload);
+    fs.appendFileSync(p, JSON.stringify(obj) + '\n');
+  } catch (e) {
+    console.warn('Could not write AI trace log:', e.message);
+  }
+}
 // Configure multer for file uploads (5MB max)
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -1088,7 +1116,12 @@ router.post("/generate", authMiddleware, upload.fields([
       // NEW: Assessment mode
       isAssessment,
       numCaseStudies,
-      includeCompanyBackground
+      includeCompanyBackground,
+      // NEW: Assessment Modules
+      enableAssessmentModules,
+      assessmentModules,
+      moduleSettings,
+      antiCheating
     } = req.body;
 
     // Normalize inputs
@@ -1117,7 +1150,8 @@ router.post("/generate", authMiddleware, upload.fields([
     const contentLengthNormalized = contentLength || 'medium';
     const lengthConfig = lengthMap[contentLengthNormalized] || lengthMap.medium;
     
-    const numQuestionsInt = Math.min(Math.max(parseInt(numQuestions) || 7, 1), 10);
+    // numQuestionsInt will be derived from assessment modules when provided; fallback to legacy slider value otherwise. Declare here and set after parsing modules.
+    let numQuestionsInt = null;
     
     const validDifficulties = ['easy', 'medium', 'hard'];
     const finalDifficultyLevel = validDifficulties.includes(difficultyLevel) ? difficultyLevel : 'medium';
@@ -1134,6 +1168,103 @@ router.post("/generate", authMiddleware, upload.fields([
         selectedPsychometrics = [];
       }
     }
+
+    // Parse assessment modules
+    let selectedAssessmentModules = [];
+    let parsedModuleSettings = {};
+    let parsedAntiCheating = {};
+
+    // If modules are expected, parse robustly and log input for debugging
+    if (enableAssessmentModules === 'true' || enableAssessmentModules === true) {
+      try {
+        console.log('Raw assessmentModules input:', assessmentModules);
+
+        // helper to parse various shapes (stringified JSON, quoted JSON, arrays)
+        const tryParseItem = (item) => {
+          if (typeof item !== 'string') return item;
+          let cur = item.trim();
+          // strip wrapping single/double quotes
+          if ((cur.startsWith('"') && cur.endsWith('"')) || (cur.startsWith("'") && cur.endsWith("'"))) {
+            cur = cur.slice(1, -1);
+          }
+          // try JSON parse
+          try {
+            return JSON.parse(cur);
+          } catch (err) {
+            // last attempt: try parsing original item
+            try {
+              return JSON.parse(item);
+            } catch (err2) {
+              return item;
+            }
+          }
+        };
+
+        if (typeof assessmentModules === 'string') {
+          const parsed = tryParseItem(assessmentModules);
+          selectedAssessmentModules = Array.isArray(parsed) ? parsed : [parsed];
+        } else if (Array.isArray(assessmentModules)) {
+          selectedAssessmentModules = assessmentModules.flatMap(item => {
+            const parsed = tryParseItem(item);
+            return Array.isArray(parsed) ? parsed : [parsed];
+          });
+        } else {
+          selectedAssessmentModules = [];
+        }
+
+        // Normalize: filter falsy and dedupe
+        selectedAssessmentModules = Array.from(new Set(selectedAssessmentModules.filter(Boolean)));
+
+        // Parse moduleSettings which might be an object, stringified object, or array of stringified objects
+        let moduleSettingsObj = {};
+        if (typeof moduleSettings === 'string') {
+          const parsed = tryParseItem(moduleSettings);
+          moduleSettingsObj = (parsed && typeof parsed === 'object') ? parsed : {};
+        } else if (Array.isArray(moduleSettings)) {
+          // prefer first object that parses correctly, otherwise merge all
+          const parsedList = moduleSettings.map(it => tryParseItem(it)).filter(Boolean);
+          for (const p of parsedList) {
+            if (p && typeof p === 'object') {
+              moduleSettingsObj = Object.assign(moduleSettingsObj, p);
+            }
+          }
+        } else if (moduleSettings && typeof moduleSettings === 'object') {
+          moduleSettingsObj = moduleSettings;
+        }
+
+        // Normalize counts to integers
+        Object.keys(moduleSettingsObj || {}).forEach(k => {
+          const v = moduleSettingsObj[k];
+          if (typeof v === 'string') {
+            const n = parseInt(v, 10);
+            moduleSettingsObj[k] = Number.isFinite(n) ? n : v;
+          }
+        });
+
+        parsedModuleSettings = moduleSettingsObj;
+
+        console.log('Parsed assessment modules:', selectedAssessmentModules);
+        console.log('Parsed moduleSettings:', parsedModuleSettings);
+
+      } catch (e) {
+        console.warn('Error parsing assessment modules:', e);
+        selectedAssessmentModules = [];
+      }
+    } else {
+      // If modules are no longer optional in this flow, enforce selection
+      console.warn('Assessment modules are disabled by request; modules are required.');
+    }
+    
+    // Parse anti-cheating settings independently (not dependent on enableAssessmentModules)
+    try {
+      parsedAntiCheating = typeof antiCheating === 'string'
+        ? JSON.parse(antiCheating)
+        : (antiCheating || {});
+    } catch (e) {
+      console.warn('Error parsing anti-cheating settings:', e);
+      parsedAntiCheating = {};
+    }
+
     const numCaseStudiesInt = Math.min(Math.max(parseInt(numCaseStudies) || 3, 1), 3);
 if (![1, 2, 3].includes(numCaseStudiesInt)) {
   return res.status(400).json({ error: "numCaseStudies must be 1, 2, or 3" });
@@ -1148,10 +1279,41 @@ if (![1, 2, 3].includes(numCaseStudiesInt)) {
     console.log(`   Include Company Background: ${includeCompanyBackground === 'true' || includeCompanyBackground === true ? 'YES' : 'NO'}`);
     console.log(`   Type: ${finalCaseStudyType.toUpperCase()}`);
     console.log(`   Length: ${contentLengthNormalized} (${lengthConfig.words} words)`);
-    console.log(`   Questions: ${numQuestionsInt}`);
+    // Debug: log raw incoming module fields to aid debugging of module parsing issues
+    console.log('Incoming raw assessmentModules (from form):', assessmentModules);
+    console.log('Incoming raw moduleSettings (from form):', moduleSettings);
+    console.log('Incoming raw numQuestions (legacy slider):', numQuestions);
+    // Determine number of questions from modules only. Questions slider is deprecated and no longer used.
+    let moduleDerivedTotal = 0;
+    if (selectedAssessmentModules && selectedAssessmentModules.length > 0) {
+      selectedAssessmentModules.forEach(mod => {
+        const key = `${mod}Count`;
+        let val = parsedModuleSettings && (parsedModuleSettings[key] || parsedModuleSettings[key] === 0) ? parsedModuleSettings[key] : 0;
+        if (typeof val === 'string') val = parseInt(val) || 0;
+        moduleDerivedTotal += (Number.isFinite(val) ? val : 0);
+      });
+
+      // Require at least one positive module count
+      if (moduleDerivedTotal > 0) {
+        numQuestionsInt = Math.min(Math.max(moduleDerivedTotal, 1), 50); // cap to 50
+        console.log(`   Modules selected with total questions: ${numQuestionsInt} (breakdown: ${selectedAssessmentModules.map(m => `${m}:${parsedModuleSettings[`${m}Count`]||0}`).join(', ')})`);
+      } else {
+        console.warn('No positive module counts provided; must specify positive counts for selected modules. Parsed modules:', selectedAssessmentModules, 'Parsed moduleSettings:', parsedModuleSettings);
+        return res.status(400).json({ error: 'Select at least one assessment module and specify positive question counts for it.', parsedAssessmentModules: selectedAssessmentModules, parsedModuleSettings });
+      }
+    } else {
+      console.warn('No assessment modules selected; modules are required for generation. Raw input:', assessmentModules, 'moduleSettings:', moduleSettings);
+      return res.status(400).json({ error: 'Select at least one assessment module (e.g., mcq, openEnded) and specify question counts.', rawAssessmentModules: assessmentModules, rawModuleSettings: moduleSettings });
+    }
+
     console.log(`   Difficulty: ${finalDifficultyLevel.toUpperCase()}`);
     console.log(`   Duration: ${duration || 120} minutes`);
     console.log(`   Psychometrics: ${selectedPsychometrics.length > 0 ? selectedPsychometrics.join(', ') : 'None'}`);
+    console.log(`   Assessment Modules: ${selectedAssessmentModules.length > 0 ? selectedAssessmentModules.join(', ') : 'None'}`);
+    // DEBUG: log raw inputs to help diagnose module vs questions behavior
+    console.log(`   Raw assessmentModules input:`, assessmentModules);
+    console.log(`   Parsed assessment modules:`, selectedAssessmentModules);
+    console.log(`   Parsed moduleSettings:`, parsedModuleSettings);
     console.log(`   Assessment Mode: ${isAssessment === 'true' || isAssessment === true ? 'YES' : 'NO'}`);
 
     let job = null;
@@ -1318,6 +1480,23 @@ if (![1, 2, 3].includes(numCaseStudiesInt)) {
       if (extracted) {
         // Add company background to the context that will be passed to AI
         companyBackgroundText = `\n\n=== COMPANY BACKGROUND ===\n${extracted}\n=== END COMPANY BACKGROUND ===\n`;
+
+        // Try to parse a company name from the extracted background if job.company_name is not already set
+        try {
+          if (!job.company_name) {
+            const nameMatch = extracted.match(/^(.*?)(?:\s(?:is|was|founded|established)\b)/i);
+            if (nameMatch && nameMatch[1]) {
+              const parsedName = nameMatch[1].replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9]+$/g, '').trim();
+              if (parsedName.length > 1 && parsedName.length < 100) {
+                job.company_name = parsedName;
+                console.log(`✅ Parsed company name from background: ${job.company_name}`);
+              }
+            }
+          }
+        } catch (parseErr) {
+          console.warn('⚠️ Failed to parse company name from background:', parseErr.message);
+        }
+
         console.log(`✅ Company background extracted and will be included in case study`);
       }
     }
@@ -1403,47 +1582,189 @@ if (![1, 2, 3].includes(numCaseStudiesInt)) {
           if (caseStudyGenerated) break;
 
           const prompt = generateAdaptiveStructuredPrompt(
-            job, 
-            duration, 
-            instructions, 
-            i, 
-            finalCaseStudyType, 
-            fullContextForAI,  
-            combinedContext + psychometricContext,
+            job,
+            duration,
+            instructions,
+            i,
+            finalCaseStudyType,
+            fullContextForAI,
             lengthConfig.words,
             numQuestionsInt,
-            finalDifficultyLevel
+            finalDifficultyLevel,
+            selectedAssessmentModules,
+            parsedModuleSettings
           );
+
+          // Prepare a friendly modules summary for logs if modules are selected
+          let moduleLogParts = [];
+          let moduleTotalForLog = 0;
+          if (selectedAssessmentModules && selectedAssessmentModules.length > 0) {
+            moduleLogParts = selectedAssessmentModules.map(m => {
+              const key = `${m}Count`;
+              const cnt = (parsedModuleSettings && (typeof parsedModuleSettings[key] !== 'undefined')) ? parsedModuleSettings[key] : 0;
+              moduleTotalForLog += Number(cnt || 0);
+              return `${m}: ${cnt}`;
+            });
+          }
 
           console.log(`${'─'.repeat(70)}`);
           console.log(`🔄 VARIANT ${i}/3: Generating case study...`);
-          console.log(`   Type: ${finalCaseStudyType} | Difficulty: ${finalDifficultyLevel} | Questions: ${numQuestionsInt}`);
+          if (moduleLogParts.length > 0) {
+            console.log(`   Type: ${finalCaseStudyType} | Difficulty: ${finalDifficultyLevel} | Modules: ${moduleLogParts.join(', ')} (total ${moduleTotalForLog})`);
+          } else {
+            console.log(`   Type: ${finalCaseStudyType} | Difficulty: ${finalDifficultyLevel} | Questions: ${numQuestionsInt}`);
+          }
           console.log(`   🤖 Provider: ${provider.toUpperCase()}`);
           if (selectedPsychometrics.length > 0) {
             console.log(`   🧠 Psychometrics: ${selectedPsychometrics.join(', ')}`);
           }
           
-          let aiContent = await aiService.generateContent(prompt, provider);
+          // Remove any legacy 'Questions:' lines from the prompt before logging or sending
+          const sanitizedPromptForSend = String(prompt).replace(/(^|\n)\s*-?\s*Questions:.*$/gmi, '');
+
+          appendAiLog('prompt', { jobId: job.id || null, variant: i, provider, prompt: sanitizeForLogging(sanitizedPromptForSend).substring(0, 4000) });
+
+          let aiContent = await aiService.generateContent(sanitizedPromptForSend, provider);
           console.log(`✅ AI response received from ${provider.toUpperCase()}: ${aiContent.length} characters`);
+
+          appendAiLog('response', { jobId: job.id || null, variant: i, provider, response: sanitizeForLogging(aiContent).substring(0, 4000), length: aiContent.length });
 
           console.log(`🔧 Sanitizing and parsing JSON...`);
           const caseStudyData = sanitizeJSON(aiContent);
 
           if (!caseStudyData) {
+            appendAiLog('parse_error', { jobId: job.id || null, variant: i, provider, reason: 'invalid_json', raw: sanitizeForLogging(aiContent).substring(0, 2000) });
             throw new Error('Failed to parse AI response - invalid JSON returned');
           }
 
+          // If we have a parsed company name, replace any generic 'Company XYZ' placeholders in AI output
+          try {
+            const parsedName = job && job.company_name ? String(job.company_name).trim() : null;
+            if (parsedName && parsedName.length > 1) {
+              const replacePlaceholders = (text) => {
+                if (!text || typeof text !== 'string') return text;
+                return text.replace(/Company XYZ/g, parsedName).replace(/Company\s+XYZ/g, parsedName);
+              };
+
+              if (caseStudyData.en) {
+                caseStudyData.en.description = replacePlaceholders(caseStudyData.en.description);
+                caseStudyData.en.instructions = replacePlaceholders(caseStudyData.en.instructions);
+                if (Array.isArray(caseStudyData.en.questions)) {
+                  caseStudyData.en.questions = caseStudyData.en.questions.map(q => replacePlaceholders(q));
+                }
+              }
+
+              if (caseStudyData.ar) {
+                // Try to replace an Arabic literal placeholder if present (best-effort)
+                caseStudyData.ar.description = caseStudyData.ar.description ? caseStudyData.ar.description.replace(/Company XYZ/g, parsedName) : caseStudyData.ar.description;
+                caseStudyData.ar.instructions = caseStudyData.ar.instructions ? caseStudyData.ar.instructions.replace(/Company XYZ/g, parsedName) : caseStudyData.ar.instructions;
+                if (Array.isArray(caseStudyData.ar.questions)) {
+                  caseStudyData.ar.questions = caseStudyData.ar.questions.map(q => (typeof q === 'string' ? q.replace(/Company XYZ/g, parsedName) : q));
+                }
+              }
+
+            }
+          } catch (replaceErr) {
+            console.warn('⚠️ Failed to replace Company XYZ placeholder:', replaceErr.message);
+          }
+
+          // If Arabic content missing or incomplete, attempt targeted regeneration/translation before failing
+          async function attemptRecoverArabic(caseStudyDataObj) {
+            try {
+              appendAiLog('recovery_attempt', { jobId: job.id || null, variant: i, provider, step: 'starting_recovery' });
+
+              // 1) Ask AI to produce ONLY the Arabic section given the English section
+              const recoveryPrompt = `Translate the following JSON 'en' section into Arabic. RETURN ONLY VALID JSON with top-level key 'ar' that contains 'description', 'instructions', 'questions', and 'tables' matching the same structure and counts as the provided 'en'.\n\nENGLISH_JSON:\n${JSON.stringify({ en: caseStudyDataObj.en })}`;
+
+              appendAiLog('recovery_prompt', { jobId: job.id || null, variant: i, provider, prompt: sanitizeForLogging(recoveryPrompt).substring(0, 4000) });
+
+              try {
+                const recoveryResp = await aiService.generateContent(recoveryPrompt, provider);
+                appendAiLog('recovery_response', { jobId: job.id || null, variant: i, provider, response: sanitizeForLogging(recoveryResp).substring(0, 4000) });
+                const recovered = sanitizeJSON(recoveryResp);
+                if (recovered && recovered.ar && recovered.ar.description && recovered.ar.instructions && Array.isArray(recovered.ar.questions) && recovered.ar.questions.length === (caseStudyDataObj.en.questions || []).length) {
+                  caseStudyDataObj.ar = recovered.ar;
+                  appendAiLog('recovery_success', { jobId: job.id || null, variant: i, provider });
+                  return true;
+                }
+              } catch (recErr) {
+                appendAiLog('recovery_failed_ai', { jobId: job.id || null, variant: i, provider, error: recErr.message });
+              }
+
+              // 2) Fallback to deterministic translation for critical fields (safe fallback)
+              try {
+                const translated = {};
+                translated.description = await translationService.translateToArabic(caseStudyDataObj.en.description || '');
+                translated.instructions = await translationService.translateToArabic(caseStudyDataObj.en.instructions || '');
+                translated.questions = [];
+                for (const q of (caseStudyDataObj.en.questions || [])) {
+                  translated.questions.push(await translationService.translateToArabic(q));
+                }
+                translated.tables = (caseStudyDataObj.en.tables || []).map(t => {
+                  const rows = (t.rows || []).map(r => {
+                    const newRow = {};
+                    Object.keys(r).forEach(k => {
+                      newRow[k] = r[k] ? translationService.translateToArabic(String(r[k])) : '';
+                    });
+                    return newRow;
+                  });
+                  return Object.assign({}, t, { title: translationService.translateToArabic(t.title || ''), rows });
+                });
+
+                // Wait for any pending translations to resolve
+                const resolvedTranslated = {
+                  description: await translated.description,
+                  instructions: await translated.instructions,
+                  questions: await Promise.all(translated.questions),
+                  tables: await Promise.all(translated.tables.map(async t => {
+                    // t.title may be a promise
+                    const title = await t.title;
+                    const rows = await Promise.all((t.rows || []).map(async r => {
+                      const newR = {};
+                      for (const k of Object.keys(r)) {
+                        newR[k] = await r[k];
+                      }
+                      return newR;
+                    }));
+                    return Object.assign({}, t, { title, rows });
+                  }))
+                };
+
+                caseStudyDataObj.ar = resolvedTranslated;
+                appendAiLog('recovery_success_translation', { jobId: job.id || null, variant: i, provider });
+                return true;
+              } catch (transErr) {
+                appendAiLog('recovery_failed_translation', { jobId: job.id || null, variant: i, provider, error: transErr.message });
+              }
+
+            } catch (e) {
+              appendAiLog('recovery_failed', { jobId: job.id || null, variant: i, provider, error: e.message });
+            }
+            return false;
+          }
+
+          // If en or ar section missing, try recovery path instead of failing immediately
           if (!caseStudyData.en || !caseStudyData.ar) {
-            throw new Error('Missing English or Arabic sections in AI response');
+            appendAiLog('missing_sections', { jobId: job.id || null, variant: i, provider, details: { has_en: !!caseStudyData.en, has_ar: !!caseStudyData.ar } });
+            const recovered = await attemptRecoverArabic(caseStudyData);
+            if (!recovered) {
+              throw new Error('Missing English or Arabic sections in AI response and recovery failed');
+            }
           }
 
           const requiredFields = ['description', 'instructions', 'questions'];
           for (const field of requiredFields) {
             if (!caseStudyData.en[field]) {
+              appendAiLog('missing_field', { jobId: job.id || null, variant: i, provider, section: 'en', field });
               throw new Error(`Missing ${field} in English section`);
             }
             if (!caseStudyData.ar[field]) {
-              throw new Error(`Missing ${field} in Arabic section`);
+              appendAiLog('missing_field', { jobId: job.id || null, variant: i, provider, section: 'ar', field });
+              // Try to recover the single missing field
+              const singleFieldRecovered = await attemptRecoverArabic(caseStudyData);
+              if (!singleFieldRecovered) {
+                throw new Error(`Missing ${field} in Arabic section and recovery failed`);
+              }
             }
           }
 
@@ -1527,8 +1848,8 @@ Return ONLY valid JSON with NO markdown, NO explanations:
           const caseStudyId = insertResult.insertId;
           console.log(`📝 Case study inserted with ID: ${caseStudyId}`);
 
-          // Insert questions
-          if (Array.isArray(caseStudyData.en.questions) && Array.isArray(caseStudyData.ar.questions)) {
+          // Insert questions (legacy simple questions) ONLY if there are NO assessment modules selected
+          if ((!selectedAssessmentModules || selectedAssessmentModules.length === 0) && Array.isArray(caseStudyData.en.questions) && Array.isArray(caseStudyData.ar.questions)) {
             const questionsToInsert = Math.min(
               numQuestionsInt,
               caseStudyData.en.questions.length,
@@ -1545,7 +1866,9 @@ Return ONLY valid JSON with NO markdown, NO explanations:
                 ]
               );
             }
-            console.log(`❓ Inserted ${questionsToInsert} questions`);
+            console.log(`❓ Inserted ${questionsToInsert} legacy questions`);
+          } else if (selectedAssessmentModules && selectedAssessmentModules.length > 0) {
+            console.log(`ℹ️ Skipping legacy question insertion because assessment modules are used`);
           }
           
           // Insert tables
@@ -1587,6 +1910,337 @@ Return ONLY valid JSON with NO markdown, NO explanations:
             console.log(`📊 Inserted ${caseStudyData.ar.tables.length} Arabic tables`);
           }
 
+          // NEW: Generate and store assessment modules if enabled
+          let generatedModules = null;
+          if (selectedAssessmentModules.length > 0) {
+            console.log(`\n🎯 Generating assessment modules for case study ${caseStudyId}...`);
+
+            // Build a concise case-study context (description + table summaries) to ensure modules reference scenario context
+            let caseStudyContextForModules = '';
+            try {
+              const parts = [];
+              if (caseStudyData && caseStudyData.en && caseStudyData.en.description) {
+                parts.push(`CASE STUDY DESCRIPTION:\n${caseStudyData.en.description}`);
+              }
+
+              if (caseStudyData && caseStudyData.en && Array.isArray(caseStudyData.en.tables) && caseStudyData.en.tables.length > 0) {
+                const tblSummaries = [];
+                for (const tbl of caseStudyData.en.tables) {
+                  const cols = (tbl.columns || []).map(c => (c.label || c.key || c)).join(' | ');
+                  const sampleRows = (tbl.rows || []).slice(0,3).map(r => JSON.stringify(r)).join(' ; ');
+                  tblSummaries.push(`- ${tbl.title || tbl.table_id || 'table'}: columns: ${cols}${sampleRows ? `. sample_rows: ${sampleRows}` : ''}`);
+                }
+                parts.push(`TABLE SUMMARIES:\n${tblSummaries.join('\n')}`);
+              }
+
+              if (parts.length > 0) {
+                caseStudyContextForModules = parts.join('\n\n');
+              }
+            } catch (ctxErr) {
+              console.warn('⚠️ Failed to build caseStudyContextForModules:', ctxErr.message);
+            }
+
+            // Append the original full context as fallback and provide an explicit instruction to use the case study context
+            const modulePromptContext = `CONTEXT USAGE INSTRUCTION: Use the CASE STUDY DESCRIPTION and TABLE SUMMARIES below as the primary source when generating module questions; reference specific metrics, table titles, and named entities when relevant.\n\n${caseStudyContextForModules}\n\nFALLBACK CONTEXT:\n${fullContextForAI}`;
+
+            appendAiLog('module_context', { caseStudyId, variant: i, provider, context: sanitizeForLogging(caseStudyContextForModules).substring(0,2000) });
+            
+            const moduleGenResult = await generateAssessmentModules(
+              job,
+              selectedAssessmentModules,
+              parsedModuleSettings,
+              finalDifficultyLevel,
+              modulePromptContext,
+              provider,
+              selectedPsychometrics // Pass psychometric types to module generator
+            );
+            
+            generatedModules = moduleGenResult.results;
+
+            // Attach a truncated context summary for traceability
+            try {
+              moduleGenResult.context_summary = sanitizeForLogging(caseStudyContextForModules).substring(0,2000);
+              appendAiLog('module_generation_result', { caseStudyId, variant: i, provider, summary: moduleGenResult.context_summary, module_counts: moduleLogParts || null });
+            } catch (attachErr) {
+              console.warn('⚠️ Failed to attach module context summary:', attachErr.message);
+            }
+            
+            // Store MCQ questions
+            if (generatedModules.mcq && generatedModules.mcq.length > 0) {
+              for (let qIdx = 0; qIdx < generatedModules.mcq.length; qIdx++) {
+                const mcq = generatedModules.mcq[qIdx];
+                const correctAnswer = mcq.options.find(o => o.is_correct)?.id || 'A';
+                const [insertedQ] = await db.query(
+                  `INSERT INTO custom_questions 
+                   (case_study_id, question_type, question_text, question_text_ar, 
+                    options, correct_answers, time_limit, weight, question_order, created_at)
+                   VALUES (?, 'mcq', ?, ?, ?, ?, ?, 1.0, ?, NOW())`,
+                  [
+                    caseStudyId,
+                    mcq.question_en,
+                    mcq.question_ar,
+                    JSON.stringify(mcq.options),
+                    JSON.stringify([correctAnswer]),
+                    null,
+                    qIdx
+                  ]
+                );
+                
+                // Store scoring rule
+                await db.query(
+                  `INSERT INTO scoring_rules 
+                   (question_id, rule_name, rule_type, rule_config, points_awarded, created_at)
+                   VALUES (?, 'MCQ Exact Match', 'exact_match', ?, 10, NOW())`,
+                  [insertedQ.insertId, JSON.stringify({ explanation_en: mcq.explanation_en, explanation_ar: mcq.explanation_ar })]
+                );
+              }
+              console.log(`📝 Stored ${generatedModules.mcq.length} MCQ questions`);
+            }
+            
+            // Store open-ended questions
+            if (generatedModules.openEnded && generatedModules.openEnded.length > 0) {
+              for (let qIdx = 0; qIdx < generatedModules.openEnded.length; qIdx++) {
+                const openQ = generatedModules.openEnded[qIdx];
+                const [insertedQ] = await db.query(
+                  `INSERT INTO custom_questions 
+                   (case_study_id, question_type, question_text, question_text_ar,
+                    keywords, time_limit, weight, min_word_count, max_word_count, question_order, created_at)
+                   VALUES (?, 'open_ended', ?, ?, ?, ?, 1.0, ?, ?, ?, NOW())`,
+                  [
+                    caseStudyId,
+                    openQ.question_en,
+                    openQ.question_ar,
+                    JSON.stringify(openQ.expected_keywords || []),
+                    null,
+                    openQ.min_word_count || 50,
+                    openQ.max_word_count || 500,
+                    qIdx
+                  ]
+                );
+                
+                // Store scoring rule with keywords
+                await db.query(
+                  `INSERT INTO scoring_rules 
+                   (question_id, rule_name, rule_type, rule_config, points_awarded, created_at)
+                   VALUES (?, 'Keyword Match', 'keyword_match', ?, 10, NOW())`,
+                  [insertedQ.insertId, JSON.stringify({
+                    keywords: openQ.expected_keywords,
+                    match_type: 'any',
+                    case_sensitive: false,
+                    scoring_criteria_en: openQ.scoring_criteria_en,
+                    scoring_criteria_ar: openQ.scoring_criteria_ar,
+                    sample_strong_response_en: openQ.sample_strong_response_en,
+                    sample_strong_response_ar: openQ.sample_strong_response_ar,
+                    min_word_count: openQ.min_word_count,
+                    max_word_count: openQ.max_word_count
+                  })]
+                );
+              }
+              console.log(`📝 Stored ${generatedModules.openEnded.length} open-ended questions`);
+            }
+            
+            // Store video response questions
+            if (generatedModules.videoResponse && generatedModules.videoResponse.length > 0) {
+              for (let qIdx = 0; qIdx < generatedModules.videoResponse.length; qIdx++) {
+                const videoQ = generatedModules.videoResponse[qIdx];
+                await db.query(
+                  `INSERT INTO custom_questions 
+                   (case_study_id, question_type, question_text, question_text_ar,
+                    time_limit, min_video_duration, max_video_duration, weight, question_order, rubric, created_at)
+                   VALUES (?, 'video_response', ?, ?, ?, ?, ?, 1.0, ?, ?, NOW())`,
+                  [
+                    caseStudyId,
+                    videoQ.question_en,
+                    videoQ.question_ar,
+                    null,
+                    videoQ.preparation_time_seconds || 30,
+                    videoQ.max_response_time_seconds || 180,
+                    qIdx,
+                    JSON.stringify({
+                      evaluation_criteria_en: videoQ.evaluation_criteria_en,
+                      evaluation_criteria_ar: videoQ.evaluation_criteria_ar,
+                      tips_for_candidate_en: videoQ.tips_for_candidate_en,
+                      tips_for_candidate_ar: videoQ.tips_for_candidate_ar
+                    })
+                  ]
+                );
+              }
+              console.log(`🎥 Stored ${generatedModules.videoResponse.length} video response questions`);
+            }
+            
+            // Store coding challenges
+            if (generatedModules.codingChallenge && generatedModules.codingChallenge.length > 0) {
+              for (let qIdx = 0; qIdx < generatedModules.codingChallenge.length; qIdx++) {
+                const coding = generatedModules.codingChallenge[qIdx];
+                const [insertedQ] = await db.query(
+                  `INSERT INTO custom_questions 
+                   (case_study_id, question_type, question_text, question_text_ar,
+                    time_limit, weight, question_order, test_cases, starter_code, skill_tags, created_at)
+                   VALUES (?, 'coding', ?, ?, ?, 2.0, ?, ?, ?, ?, NOW())`,
+                  [
+                    caseStudyId,
+                    coding.problem_statement_en,
+                    coding.problem_statement_ar,
+                    null,
+                    qIdx,
+                    JSON.stringify(coding.test_cases || []),
+                    JSON.stringify(coding.starter_code || {}),
+                    JSON.stringify(coding.tags || [])
+                  ]
+                );
+                
+                // Store test cases as scoring rule
+                if (coding.test_cases && coding.test_cases.length > 0) {
+                  await db.query(
+                    `INSERT INTO scoring_rules 
+                     (question_id, rule_name, rule_type, rule_config, points_awarded, created_at)
+                     VALUES (?, 'Code Test Cases', 'test_case', ?, 100, NOW())`,
+                    [insertedQ.insertId, JSON.stringify({ 
+                      test_cases: coding.test_cases,
+                      timeout_ms: 5000,
+                      input_format_en: coding.input_format_en,
+                      output_format_en: coding.output_format_en,
+                      constraints_en: coding.constraints_en,
+                      examples: coding.examples
+                    })]
+                  );
+                }
+              }
+              console.log(`💻 Stored ${generatedModules.codingChallenge.length} coding challenges`);
+            }
+            
+            // Store SQL problems
+            if (generatedModules.sqlProblem && generatedModules.sqlProblem.length > 0) {
+              for (let qIdx = 0; qIdx < generatedModules.sqlProblem.length; qIdx++) {
+                const sql = generatedModules.sqlProblem[qIdx];
+                const [insertedQ] = await db.query(
+                  `INSERT INTO custom_questions 
+                   (case_study_id, question_type, question_text, question_text_ar,
+                    time_limit, weight, question_order, expected_response, skill_tags, created_at)
+                   VALUES (?, 'sql', ?, ?, ?, 2.0, ?, ?, ?, NOW())`,
+                  [
+                    caseStudyId,
+                    sql.task_en,
+                    sql.task_ar,
+                    null,
+                    qIdx,
+                    sql.solution_query || '',
+                    JSON.stringify(sql.concepts || [])
+                  ]
+                );
+                
+                // Store schema and expected output as scoring rule
+                await db.query(
+                  `INSERT INTO scoring_rules 
+                   (question_id, rule_name, rule_type, rule_config, points_awarded, created_at)
+                   VALUES (?, 'SQL Output Match', 'code_output', ?, 100, NOW())`,
+                  [insertedQ.insertId, JSON.stringify({ 
+                    expected_output: sql.expected_output,
+                    solution_query: sql.solution_query,
+                    schema: sql.schema,
+                    hints_en: sql.hints_en,
+                    hints_ar: sql.hints_ar,
+                    concepts: sql.concepts
+                  })]
+                );
+              }
+              console.log(`🗄️ Stored ${generatedModules.sqlProblem.length} SQL problems`);
+            }
+            
+            // Store Excel tasks
+            if (generatedModules.excelTask && generatedModules.excelTask.length > 0) {
+              for (let qIdx = 0; qIdx < generatedModules.excelTask.length; qIdx++) {
+                const excel = generatedModules.excelTask[qIdx];
+                await db.query(
+                  `INSERT INTO custom_questions 
+                   (case_study_id, question_type, question_text, question_text_ar,
+                    time_limit, weight, question_order, spreadsheet_template, spreadsheet_solution, skill_tags, created_at)
+                   VALUES (?, 'excel', ?, ?, ?, 2.0, ?, ?, ?, ?, NOW())`,
+                  [
+                    caseStudyId,
+                    excel.scenario_en,
+                    excel.scenario_ar,
+                    null,
+                    qIdx,
+                    JSON.stringify(excel.starter_data || {}),
+                    JSON.stringify(excel.expected_outputs || []),
+                    JSON.stringify(excel.skills || [])
+                  ]
+                );
+              }
+              console.log(`📊 Stored ${generatedModules.excelTask.length} Excel tasks`);
+            }
+            
+            // Store writing exercises
+            if (generatedModules.writingExercise && generatedModules.writingExercise.length > 0) {
+              for (let qIdx = 0; qIdx < generatedModules.writingExercise.length; qIdx++) {
+                const writing = generatedModules.writingExercise[qIdx];
+                await db.query(
+                  `INSERT INTO custom_questions 
+                   (case_study_id, question_type, question_text, question_text_ar,
+                    time_limit, weight, question_order, min_word_count, max_word_count, rubric, created_at)
+                   VALUES (?, 'writing', ?, ?, ?, 1.0, ?, ?, ?, ?, NOW())`,
+                  [
+                    caseStudyId,
+                    writing.scenario_en,
+                    writing.scenario_ar,
+                    null,
+                    qIdx,
+                    writing.word_count_min || 200,
+                    writing.word_count_max || 500,
+                    JSON.stringify(writing.rubric || {})
+                  ]
+                );
+              }
+              console.log(`📄 Stored ${generatedModules.writingExercise.length} writing exercises`);
+            }
+            
+            // Store situational judgment tests
+            if (generatedModules.situationalJudgment && generatedModules.situationalJudgment.length > 0) {
+              for (let qIdx = 0; qIdx < generatedModules.situationalJudgment.length; qIdx++) {
+                const sjt = generatedModules.situationalJudgment[qIdx];
+                await db.query(
+                  `INSERT INTO custom_questions 
+                   (case_study_id, question_type, question_text, question_text_ar, options,
+                    time_limit, weight, question_order, skill_tags, created_at)
+                   VALUES (?, 'situational', ?, ?, ?, ?, 1.0, ?, ?, NOW())`,
+                  [
+                    caseStudyId,
+                    sjt.scenario_en + '\n\n' + sjt.question_en,
+                    sjt.scenario_ar + '\n\n' + sjt.question_ar,
+                    JSON.stringify(sjt.options),
+                    null,
+                    qIdx,
+                    JSON.stringify(sjt.competencies_assessed || [])
+                  ]
+                );
+              }
+              console.log(`🎯 Stored ${generatedModules.situationalJudgment.length} situational judgment tests`);
+            }
+            
+            console.log(`✅ Assessment modules generation complete for case study ${caseStudyId}`);
+          }
+
+          // Store anti-cheating settings independently (outside assessment modules block)
+          if (Object.keys(parsedAntiCheating).length > 0) {
+            await db.query(
+              `INSERT INTO anti_cheating_settings 
+               (case_study_id, prevent_tab_switch, disable_copy_paste, 
+                webcam_snapshots_interval, require_webcam, require_fullscreen, tab_switch_limit, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
+              [
+                caseStudyId,
+                parsedAntiCheating.enableTabSwitch ? 1 : 0,
+                parsedAntiCheating.enableCopyPaste ? 1 : 0,
+                (typeof parsedAntiCheating.webcam_snapshots_interval !== 'undefined' ? parsedAntiCheating.webcam_snapshots_interval : (parsedAntiCheating.enableWebcamProctoring ? 30 : 0)),
+                parsedAntiCheating.enableWebcamProctoring ? 1 : 0,
+                parsedAntiCheating.enableFullscreen ? 1 : 0,
+                parsedAntiCheating.maxTabSwitches || 3
+              ]
+            );
+            console.log(`🔒 Stored anti-cheating settings`);
+          }
+
           generatedCaseStudies.push({
             id: caseStudyId,
             variant: i,
@@ -1596,10 +2250,25 @@ Return ONLY valid JSON with NO markdown, NO explanations:
             case_study_type: finalCaseStudyType,
             content_length: contentLengthNormalized,
             difficulty_level: finalDifficultyLevel,
-            num_questions: numQuestionsInt,
+            num_questions: (selectedAssessmentModules && selectedAssessmentModules.length > 0) ? Object.keys(parsedModuleSettings || {}).reduce((sum, key) => key.endsWith('Count') ? sum + Number(parsedModuleSettings[key] || 0) : sum, 0) : numQuestionsInt,
             duration: caseStudyData.duration_minutes || duration || 120,
             enable_psychometrics: selectedPsychometrics.length > 0,
-            psychometric_types: selectedPsychometrics
+            psychometric_types: selectedPsychometrics,
+            // NEW: Assessment modules info
+            enable_assessment_modules: selectedAssessmentModules.length > 0,
+            assessment_modules: selectedAssessmentModules,
+            module_settings: parsedModuleSettings,
+            anti_cheating: parsedAntiCheating,
+            generated_modules_summary: generatedModules ? {
+              mcq: generatedModules.mcq?.length || 0,
+              openEnded: generatedModules.openEnded?.length || 0,
+              videoResponse: generatedModules.videoResponse?.length || 0,
+              codingChallenge: generatedModules.codingChallenge?.length || 0,
+              sqlProblem: generatedModules.sqlProblem?.length || 0,
+              excelTask: generatedModules.excelTask?.length || 0,
+              writingExercise: generatedModules.writingExercise?.length || 0,
+              situationalJudgment: generatedModules.situationalJudgment?.length || 0
+            } : null
           });
 
           // If assessment mode, link case study to assessment
@@ -1660,11 +2329,16 @@ Return ONLY valid JSON with NO markdown, NO explanations:
     caseStudyType: finalCaseStudyType,
     contentLength: contentLengthNormalized,
     difficultyLevel: finalDifficultyLevel,
-    numQuestions: numQuestionsInt,
-    numCaseStudies: numCaseStudiesInt,  // NEW: Include in summary
+    numQuestions: (selectedAssessmentModules && selectedAssessmentModules.length > 0) ? Object.keys(parsedModuleSettings || {}).reduce((sum, key) => key.endsWith('Count') ? sum + Number(parsedModuleSettings[key] || 0) : sum, 0) : numQuestionsInt,
+    numCaseStudies: numCaseStudiesInt,
     duration: duration || 120,
     enablePsychometrics: selectedPsychometrics.length > 0,
     psychometricTypes: selectedPsychometrics,
+    // NEW: Assessment modules summary
+    enableAssessmentModules: selectedAssessmentModules.length > 0,
+    assessmentModules: selectedAssessmentModules,
+    moduleSettings: parsedModuleSettings,
+    antiCheating: parsedAntiCheating,
     jobId: jobIdToUse || jobId,
     jobTitle: job ? job.title : 'Case Study Assessment'
   },
@@ -1815,11 +2489,12 @@ router.get("/job/:jobId", authMiddleware, languageMiddleware, async (req, res) =
 
     for (let cs of caseStudies) {
       const [questions] = await db.query(
-        `SELECT ${lang === 'ar' ? 'COALESCE(question_ar, question)' : 'question'} as question 
+        `SELECT ${lang === 'ar' ? 'COALESCE(question_ar, question)' : 'question'} as question, weight 
          FROM case_study_questions WHERE case_study_id = ? ORDER BY id`,
         [cs.id]
       );
       cs.questions = questions.map((q) => q.question);
+      cs.questionWeights = questions.map((q) => parseFloat(q.weight) || 1.0);
 
       const [tables] = await db.query(
         `SELECT * FROM case_study_tables WHERE case_study_id = ? AND language = ?`,
@@ -1847,6 +2522,58 @@ router.get("/job/:jobId", authMiddleware, languageMiddleware, async (req, res) =
         enabled: cs.enable_psychometrics === 1,
         types: parsePsychometricTypes(cs.psychometric_types)
       };
+
+      // NEW: Fetch custom questions (assessment modules) for job-based case studies
+      const [customQuestions] = await db.query(
+        `SELECT 
+          id, question_type, 
+          ${lang === 'ar' ? 'COALESCE(question_text_ar, question_text)' : 'question_text'} as question_text,
+          question_text as question_text_en,
+          question_text_ar,
+          options, correct_answers, keywords, rubric,
+          time_limit, weight, question_order,
+          min_word_count, max_word_count, min_video_duration, max_video_duration,
+          test_cases, starter_code, spreadsheet_template, spreadsheet_solution,
+          expected_response, skill_tags
+        FROM custom_questions 
+        WHERE case_study_id = ? AND is_active = 1
+        ORDER BY question_order ASC`,
+        [cs.id]
+      );
+
+      cs.customQuestions = customQuestions.map(q => ({
+        ...q,
+        options: q.options ? (typeof q.options === 'string' ? JSON.parse(q.options) : q.options) : null,
+        correct_answers: q.correct_answers ? (typeof q.correct_answers === 'string' ? JSON.parse(q.correct_answers) : q.correct_answers) : null,
+        keywords: q.keywords ? (typeof q.keywords === 'string' ? JSON.parse(q.keywords) : q.keywords) : null,
+        rubric: q.rubric ? (typeof q.rubric === 'string' ? JSON.parse(q.rubric) : q.rubric) : null,
+        test_cases: q.test_cases ? (typeof q.test_cases === 'string' ? JSON.parse(q.test_cases) : q.test_cases) : null,
+        starter_code: q.starter_code ? (typeof q.starter_code === 'string' ? JSON.parse(q.starter_code) : q.starter_code) : null,
+        spreadsheet_template: q.spreadsheet_template ? (typeof q.spreadsheet_template === 'string' ? JSON.parse(q.spreadsheet_template) : q.spreadsheet_template) : null,
+        spreadsheet_solution: q.spreadsheet_solution ? (typeof q.spreadsheet_solution === 'string' ? JSON.parse(q.spreadsheet_solution) : q.spreadsheet_solution) : null,
+        skill_tags: q.skill_tags ? (typeof q.skill_tags === 'string' ? JSON.parse(q.skill_tags) : q.skill_tags) : null,
+      }));
+
+      // Fetch anti-cheating settings and map to frontend-expected field names
+      const [antiCheatingResults] = await db.query(
+        `SELECT * FROM anti_cheating_settings WHERE case_study_id = ? LIMIT 1`,
+        [cs.id]
+      );
+      
+      if (antiCheatingResults.length > 0) {
+        const raw = antiCheatingResults[0];
+        cs.antiCheatingSettings = {
+          ...raw,
+          fullscreen_required: raw.require_fullscreen === 1 || raw.require_fullscreen === true,
+          tab_switch_detection: raw.prevent_tab_switch === 1 || raw.prevent_tab_switch === true,
+          copy_paste_disabled: raw.disable_copy_paste === 1 || raw.disable_copy_paste === true,
+          webcam_required: raw.require_webcam === 1 || raw.require_webcam === true,
+          tab_switch_limit: raw.tab_switch_limit || 3,
+          tab_switch_action: raw.tab_switch_action || 'flag',
+        };
+      } else {
+        cs.antiCheatingSettings = null;
+      }
     }
 
     res.status(200).json({ 
@@ -1893,11 +2620,12 @@ router.get("/batch/:batchId", authMiddleware, languageMiddleware, async (req, re
 
     for (let cs of caseStudies) {
       const [questions] = await db.query(
-        `SELECT ${lang === 'ar' ? 'COALESCE(question_ar, question)' : 'question'} as question 
+        `SELECT ${lang === 'ar' ? 'COALESCE(question_ar, question)' : 'question'} as question, weight 
          FROM case_study_questions WHERE case_study_id = ? ORDER BY id`,
         [cs.id]
       );
       cs.questions = questions.map((q) => q.question);
+      cs.questionWeights = questions.map((q) => parseFloat(q.weight) || 1.0);
 
       const [tables] = await db.query(
         `SELECT 
@@ -1933,6 +2661,58 @@ router.get("/batch/:batchId", authMiddleware, languageMiddleware, async (req, re
         enabled: cs.enable_psychometrics === 1,
         types: parsePsychometricTypes(cs.psychometric_types)
       };
+
+      // NEW: Fetch custom questions (assessment modules)
+      const [customQuestions] = await db.query(
+        `SELECT 
+          id, question_type, 
+          ${lang === 'ar' ? 'COALESCE(question_text_ar, question_text)' : 'question_text'} as question_text,
+          question_text as question_text_en,
+          question_text_ar,
+          options, correct_answers, keywords, rubric,
+          time_limit, weight, question_order,
+          min_word_count, max_word_count, min_video_duration, max_video_duration,
+          test_cases, starter_code, spreadsheet_template, spreadsheet_solution,
+          expected_response, skill_tags
+        FROM custom_questions 
+        WHERE case_study_id = ? AND is_active = 1
+        ORDER BY question_order ASC`,
+        [cs.id]
+      );
+
+      cs.customQuestions = customQuestions.map(q => ({
+        ...q,
+        options: q.options ? (typeof q.options === 'string' ? JSON.parse(q.options) : q.options) : null,
+        correct_answers: q.correct_answers ? (typeof q.correct_answers === 'string' ? JSON.parse(q.correct_answers) : q.correct_answers) : null,
+        keywords: q.keywords ? (typeof q.keywords === 'string' ? JSON.parse(q.keywords) : q.keywords) : null,
+        rubric: q.rubric ? (typeof q.rubric === 'string' ? JSON.parse(q.rubric) : q.rubric) : null,
+        test_cases: q.test_cases ? (typeof q.test_cases === 'string' ? JSON.parse(q.test_cases) : q.test_cases) : null,
+        starter_code: q.starter_code ? (typeof q.starter_code === 'string' ? JSON.parse(q.starter_code) : q.starter_code) : null,
+        spreadsheet_template: q.spreadsheet_template ? (typeof q.spreadsheet_template === 'string' ? JSON.parse(q.spreadsheet_template) : q.spreadsheet_template) : null,
+        spreadsheet_solution: q.spreadsheet_solution ? (typeof q.spreadsheet_solution === 'string' ? JSON.parse(q.spreadsheet_solution) : q.spreadsheet_solution) : null,
+        skill_tags: q.skill_tags ? (typeof q.skill_tags === 'string' ? JSON.parse(q.skill_tags) : q.skill_tags) : null,
+      }));
+
+      // Fetch anti-cheating settings for this case study and map to frontend names
+      const [antiCheatingResults] = await db.query(
+        `SELECT * FROM anti_cheating_settings WHERE case_study_id = ? LIMIT 1`,
+        [cs.id]
+      );
+      
+      if (antiCheatingResults.length > 0) {
+        const raw = antiCheatingResults[0];
+        cs.antiCheatingSettings = {
+          ...raw,
+          fullscreen_required: raw.require_fullscreen === 1 || raw.require_fullscreen === true,
+          tab_switch_detection: raw.prevent_tab_switch === 1 || raw.prevent_tab_switch === true,
+          copy_paste_disabled: raw.disable_copy_paste === 1 || raw.disable_copy_paste === true,
+          webcam_required: raw.require_webcam === 1 || raw.require_webcam === true,
+          tab_switch_limit: raw.tab_switch_limit || 3,
+          tab_switch_action: raw.tab_switch_action || 'flag',
+        };
+      } else {
+        cs.antiCheatingSettings = null;
+      }
     }
 
     res.json({ 
@@ -2067,11 +2847,12 @@ router.get("/my", authMiddleware, languageMiddleware, async (req, res) => {
 
     for (let cs of caseStudies) {
       const [questions] = await db.query(
-        `SELECT ${lang === 'ar' ? 'COALESCE(question_ar, question)' : 'question'} as question 
+        `SELECT ${lang === 'ar' ? 'COALESCE(question_ar, question)' : 'question'} as question, weight 
          FROM case_study_questions WHERE case_study_id = ? ORDER BY id`,
         [cs.id]
       );
       cs.questions = questions.map((q) => q.question);
+      cs.questionWeights = questions.map((q) => parseFloat(q.weight) || 1.0);
 
       const [tables] = await db.query(
         `SELECT * FROM case_study_tables WHERE case_study_id = ? AND language = ?`,
@@ -2150,13 +2931,14 @@ router.get("/:id", authMiddleware, languageMiddleware, async (req, res) => {
 
     const cs = caseStudies[0];
 
-    // Get questions
+    // Get questions with weights
     const [questions] = await db.query(
-      `SELECT ${lang === "ar" ? "COALESCE(question_ar, question)" : "question"} as question 
+      `SELECT ${lang === "ar" ? "COALESCE(question_ar, question)" : "question"} as question, weight 
        FROM case_study_questions WHERE case_study_id = ? ORDER BY id`,
       [cs.id]
     );
     cs.questions = questions.map((q) => q.question);
+    cs.questionWeights = questions.map((q) => parseFloat(q.weight) || 1.0);
 
     // Get tables
     const [tables] = await db.query(
@@ -2185,6 +2967,61 @@ router.get("/:id", authMiddleware, languageMiddleware, async (req, res) => {
       enabled: cs.enable_psychometrics === 1,
       types: parsePsychometricTypes(cs.psychometric_types)
     };
+
+    // NEW: Fetch custom questions (assessment modules)
+    const [customQuestions] = await db.query(
+      `SELECT 
+        id, question_type, 
+        ${lang === 'ar' ? 'COALESCE(question_text_ar, question_text)' : 'question_text'} as question_text,
+        question_text as question_text_en,
+        question_text_ar,
+        options, correct_answers, keywords, rubric,
+        time_limit, weight, question_order,
+        min_word_count, max_word_count, min_video_duration, max_video_duration,
+        test_cases, starter_code, spreadsheet_template, spreadsheet_solution,
+        expected_response, skill_tags
+      FROM custom_questions 
+      WHERE case_study_id = ? AND is_active = 1
+      ORDER BY question_order ASC`,
+      [cs.id]
+    );
+
+    cs.customQuestions = customQuestions.map(q => ({
+      ...q,
+      options: q.options ? (typeof q.options === 'string' ? JSON.parse(q.options) : q.options) : null,
+      correct_answers: q.correct_answers ? (typeof q.correct_answers === 'string' ? JSON.parse(q.correct_answers) : q.correct_answers) : null,
+      keywords: q.keywords ? (typeof q.keywords === 'string' ? JSON.parse(q.keywords) : q.keywords) : null,
+      rubric: q.rubric ? (typeof q.rubric === 'string' ? JSON.parse(q.rubric) : q.rubric) : null,
+      test_cases: q.test_cases ? (typeof q.test_cases === 'string' ? JSON.parse(q.test_cases) : q.test_cases) : null,
+      starter_code: q.starter_code ? (typeof q.starter_code === 'string' ? JSON.parse(q.starter_code) : q.starter_code) : null,
+      spreadsheet_template: q.spreadsheet_template ? (typeof q.spreadsheet_template === 'string' ? JSON.parse(q.spreadsheet_template) : q.spreadsheet_template) : null,
+      spreadsheet_solution: q.spreadsheet_solution ? (typeof q.spreadsheet_solution === 'string' ? JSON.parse(q.spreadsheet_solution) : q.spreadsheet_solution) : null,
+      skill_tags: q.skill_tags ? (typeof q.skill_tags === 'string' ? JSON.parse(q.skill_tags) : q.skill_tags) : null,
+    }));
+
+    // Fetch anti-cheating settings and map to frontend-expected field names
+    const [antiCheatingResults] = await db.query(
+      `SELECT * FROM anti_cheating_settings WHERE case_study_id = ? LIMIT 1`,
+      [cs.id]
+    );
+    
+    if (antiCheatingResults.length > 0) {
+      const raw = antiCheatingResults[0];
+      // Map database column names to frontend-expected names
+      cs.antiCheatingSettings = {
+        ...raw,
+        // Frontend expects these specific field names:
+        fullscreen_required: raw.require_fullscreen === 1 || raw.require_fullscreen === true,
+        tab_switch_detection: raw.prevent_tab_switch === 1 || raw.prevent_tab_switch === true,
+        copy_paste_disabled: raw.disable_copy_paste === 1 || raw.disable_copy_paste === true,
+        webcam_required: raw.require_webcam === 1 || raw.require_webcam === true,
+        tab_switch_limit: raw.tab_switch_limit || 3,
+        tab_switch_action: raw.tab_switch_action || 'flag',
+      };
+      console.log('📋 Anti-cheating settings loaded:', cs.antiCheatingSettings);
+    } else {
+      cs.antiCheatingSettings = null;
+    }
 
     res.status(200).json({
       success: true,
@@ -2347,85 +3184,8 @@ router.get("/:caseStudyId/tables", authMiddleware, languageMiddleware, async (re
 // ASSESSMENT ROUTES (MUST BE BEFORE /:id)
 // ============================================
 
-
-// ============================================
-// Generic GET by ID (MUST BE LAST) - Updated to handle assessment case studies
-// ============================================
-router.get("/:id", authMiddleware, languageMiddleware, async (req, res) => {
-  try {
-    const user = req.user;
-    const { id } = req.params;
-    const lang = req.language || "en";
-
-    // Check if user has access to this case study
-    // Either through ownership (recruiter) or through invitation (applicant - for both job-based and assessment-based)
-    const [caseStudies] = await db.query(
-      `SELECT 
-        cs.id, cs.job_id, cs.user_id,
-        ${lang === "ar" ? "COALESCE(cs.title_ar, cs.title)" : "cs.title"} as title,
-        ${lang === "ar" ? "COALESCE(cs.description_ar, cs.description)" : "cs.description"} as description,
-        ${lang === "ar" ? "COALESCE(cs.instructions_ar, cs.instructions)" : "cs.instructions"} as instructions,
-        cs.duration_minutes, cs.generation_batch, cs.is_selected, cs.is_active, cs.status, cs.created_at, cs.updated_at
-      FROM case_studies cs
-      WHERE cs.id = ?
-      AND (
-        cs.user_id = ? 
-        OR EXISTS (
-          SELECT 1 FROM case_study_invitations csi
-          JOIN job_applications ja ON csi.job_application_id = ja.id
-          WHERE csi.case_study_id = cs.id 
-          AND (ja.user_id = ? OR ja.email = ?)
-        )
-      )`,
-      [id, user.id, user.id, user.email || '']
-    );
-
-    if (!caseStudies || caseStudies.length === 0) {
-      return res.status(404).json({ error: "Case study not found or access denied" });
-    }
-
-    const cs = caseStudies[0];
-
-    // Get questions
-    const [questions] = await db.query(
-      `SELECT ${lang === "ar" ? "COALESCE(question_ar, question)" : "question"} as question 
-       FROM case_study_questions WHERE case_study_id = ? ORDER BY id`,
-      [cs.id]
-    );
-    cs.questions = questions.map((q) => q.question);
-
-    // Get tables
-    const [tables] = await db.query(
-      `SELECT * FROM case_study_tables WHERE case_study_id = ? AND language = ?`,
-      [cs.id, lang]
-    );
-    cs.tables = tables.map(t => {
-      const cols = typeof t.column_definitions === 'string' 
-        ? JSON.parse(t.column_definitions) 
-        : t.column_definitions;
-      const rows = typeof t.rows_data === 'string' 
-        ? JSON.parse(t.rows_data) 
-        : t.rows_data;
-      
-      return {
-        id: t.id,
-        table_id: t.table_id,
-        title: t.table_title,
-        columns: cols,
-        rows: rows
-      };
-    });
-
-    res.status(200).json({
-      success: true,
-      caseStudy: cs
-    });
-
-  } catch (err) {
-    console.error("Error fetching case study:", err);
-    res.status(500).json({ error: "Failed to fetch case study" });
-  }
-});
+// NOTE: The main GET /:id route is defined above (after /batch/:batchId)
+// with full customQuestions, psychometrics, and antiCheatingSettings support
 
 // Update Case Study
 router.put("/:id", authMiddleware, async (req, res) => {
@@ -2434,7 +3194,9 @@ router.put("/:id", authMiddleware, async (req, res) => {
     const { id } = req.params;
     const { 
       title, title_ar, description, description_ar,
-      instructions, instructions_ar, duration_minutes, status, questions 
+      instructions, instructions_ar, duration_minutes, status, questions,
+      customQuestionWeights, // Array of {id, weight} for custom questions
+      antiCheatingSettings // NEW: Anti-cheating settings object
     } = req.body;
 
     if (user.user_type !== "recruiter") {
@@ -2463,14 +3225,79 @@ router.put("/:id", authMiddleware, async (req, res) => {
       ]
     );
 
+    // Handle case study questions with weights
     if (Array.isArray(questions)) {
       await db.query("DELETE FROM case_study_questions WHERE case_study_id = ?", [id]);
       
       for (const q of questions) {
+        const questionText = q.question || q;
+        const questionWeight = q.weight || 1.0;
         await db.query(
-          "INSERT INTO case_study_questions (case_study_id, question, question_ar) VALUES (?, ?, ?)",
-          [id, q.question || q, q.question_ar || '']
+          "INSERT INTO case_study_questions (case_study_id, question, question_ar, weight) VALUES (?, ?, ?, ?)",
+          [id, questionText, q.question_ar || '', questionWeight]
         );
+      }
+      console.log(`✅ Updated ${questions.length} case study questions with weights`);
+    }
+
+    // Handle custom question weights
+    if (Array.isArray(customQuestionWeights) && customQuestionWeights.length > 0) {
+      for (const cqw of customQuestionWeights) {
+        if (cqw.id && cqw.weight !== undefined) {
+          await db.query(
+            "UPDATE custom_questions SET weight = ? WHERE id = ? AND case_study_id = ?",
+            [cqw.weight, cqw.id, id]
+          );
+        }
+      }
+      console.log(`✅ Updated weights for ${customQuestionWeights.length} custom questions`);
+    }
+
+    // Handle anti-cheating settings update
+    if (antiCheatingSettings && typeof antiCheatingSettings === 'object') {
+      // Check if settings exist
+      const [existingSettings] = await db.query(
+        'SELECT id FROM anti_cheating_settings WHERE case_study_id = ?',
+        [id]
+      );
+
+      if (existingSettings.length > 0) {
+        // Update existing settings
+        await db.query(
+          `UPDATE anti_cheating_settings SET
+            require_fullscreen = ?,
+            prevent_tab_switch = ?,
+            disable_copy_paste = ?,
+            require_webcam = ?,
+            tab_switch_limit = ?,
+            updated_at = NOW()
+          WHERE case_study_id = ?`,
+          [
+            antiCheatingSettings.enableFullscreen || antiCheatingSettings.fullscreen_required ? 1 : 0,
+            antiCheatingSettings.enableTabSwitch || antiCheatingSettings.tab_switch_detection ? 1 : 0,
+            antiCheatingSettings.enableCopyPaste || antiCheatingSettings.copy_paste_disabled ? 1 : 0,
+            antiCheatingSettings.enableWebcamProctoring || antiCheatingSettings.webcam_required ? 1 : 0,
+            antiCheatingSettings.maxTabSwitches || antiCheatingSettings.tab_switch_limit || 3,
+            id
+          ]
+        );
+        console.log(`✅ Updated anti-cheating settings for case study ${id}`);
+      } else {
+        // Insert new settings
+        await db.query(
+          `INSERT INTO anti_cheating_settings 
+           (case_study_id, require_fullscreen, prevent_tab_switch, disable_copy_paste, require_webcam, tab_switch_limit, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, NOW())`,
+          [
+            id,
+            antiCheatingSettings.enableFullscreen || antiCheatingSettings.fullscreen_required ? 1 : 0,
+            antiCheatingSettings.enableTabSwitch || antiCheatingSettings.tab_switch_detection ? 1 : 0,
+            antiCheatingSettings.enableCopyPaste || antiCheatingSettings.copy_paste_disabled ? 1 : 0,
+            antiCheatingSettings.enableWebcamProctoring || antiCheatingSettings.webcam_required ? 1 : 0,
+            antiCheatingSettings.maxTabSwitches || antiCheatingSettings.tab_switch_limit || 3
+          ]
+        );
+        console.log(`✅ Created anti-cheating settings for case study ${id}`);
       }
     }
 
@@ -2626,6 +3453,131 @@ router.put("/publish/bulk", authMiddleware, async (req, res) => {
            WHERE user_id = ? AND (case_study_id IS NULL OR case_study_id = ?)`,
           [caseStudyId, user.id, caseStudyId]
         );
+      }
+
+      // --- NEW: Also create a pre-built assessment entry so published case studies appear in Pre-Built Tests ---
+      try {
+        // Fetch case study details
+        const [caseRows] = await db.query(
+          `SELECT id, title, title_ar, description, description_ar, instructions, instructions_ar, duration_minutes, difficulty_level FROM case_studies WHERE id = ? AND user_id = ?`,
+          [caseStudyId, user.id]
+        );
+
+        if (caseRows.length === 0) continue; // skip if not found or not authorized
+
+        const cs = caseRows[0];
+
+        // Gather questions (simple case study questions)
+        const [questionsRows] = await db.query(
+          `SELECT question as question, question_ar as question_ar, weight as weight FROM case_study_questions WHERE case_study_id = ? ORDER BY id`,
+          [caseStudyId]
+        );
+
+        const simpleQuestions = questionsRows.map(q => ({ question: q.question, question_ar: q.question_ar, weight: q.weight || 1 }));
+
+        // Gather advanced/custom questions (assessment modules) and include them too
+        const [customQRows] = await db.query(
+          `SELECT id, question_type, question_text as question, question_text_ar as question_ar, options, correct_answers, keywords, rubric, time_limit, weight, question_order, test_cases, starter_code, spreadsheet_template, spreadsheet_solution, expected_response, skill_tags
+           FROM custom_questions WHERE case_study_id = ? AND is_active = 1 ORDER BY question_order ASC`,
+          [caseStudyId]
+        );
+
+        const customQuestions = customQRows.map(q => ({
+          question_type: q.question_type,
+          question: q.question,
+          question_ar: q.question_ar,
+          options: (typeof q.options === 'string' ? JSON.parse(q.options) : q.options) || null,
+          correct_answers: (typeof q.correct_answers === 'string' ? JSON.parse(q.correct_answers) : q.correct_answers) || null,
+          keywords: (typeof q.keywords === 'string' ? JSON.parse(q.keywords) : q.keywords) || null,
+          rubric: (typeof q.rubric === 'string' ? JSON.parse(q.rubric) : q.rubric) || null,
+          time_limit: q.time_limit || null,
+          weight: q.weight || 1,
+          question_order: q.question_order || null,
+          test_cases: (typeof q.test_cases === 'string' ? JSON.parse(q.test_cases) : q.test_cases) || null,
+          starter_code: (typeof q.starter_code === 'string' ? JSON.parse(q.starter_code) : q.starter_code) || null,
+          spreadsheet_template: (typeof q.spreadsheet_template === 'string' ? JSON.parse(q.spreadsheet_template) : q.spreadsheet_template) || null,
+          spreadsheet_solution: (typeof q.spreadsheet_solution === 'string' ? JSON.parse(q.spreadsheet_solution) : q.spreadsheet_solution) || null,
+          expected_response: (typeof q.expected_response === 'string' ? JSON.parse(q.expected_response) : q.expected_response) || null,
+          skill_tags: (typeof q.skill_tags === 'string' ? JSON.parse(q.skill_tags) : q.skill_tags) || null
+        }));
+
+        // Combined questions: include simple questions and custom modules (module-first supported)
+        // We store both simple and custom/module questions in the pre-built 'questions' field so the pre-built copy
+        // correctly reflects the total question count and can be published/copied later.
+        let questions = [...simpleQuestions];
+        let preBuiltNumQuestions = simpleQuestions.length;
+
+        if (customQuestions && customQuestions.length > 0) {
+          // Include serialized custom/module questions in the pre-built record
+          questions = questions.concat(customQuestions);
+          preBuiltNumQuestions += customQuestions.length;
+        }
+
+        // Gather tables
+        const [tablesRows] = await db.query(
+          `SELECT table_id, table_title, table_title_ar, column_definitions, rows_data FROM case_study_tables WHERE case_study_id = ?`,
+          [caseStudyId]
+        );
+
+        const tables = tablesRows.map(t => ({ table_id: t.table_id, title: t.table_title, title_ar: t.table_title_ar, columns: (typeof t.column_definitions === 'string' ? JSON.parse(t.column_definitions) : (t.column_definitions || [])), rows: (typeof t.rows_data === 'string' ? JSON.parse(t.rows_data) : (t.rows_data || [])) }));
+
+        // Build case study content JSON and include source id to avoid duplicates
+        const caseStudyContent = {
+          source_case_study_id: caseStudyId,
+          background: cs.description || '',
+          background_ar: cs.description_ar || '',
+          instructions: cs.instructions || '',
+          instructions_ar: cs.instructions_ar || '',
+          tables,
+        };
+
+        // Map difficulty back to pre-built difficulty levels if possible
+        const difficultyMapRev = {
+          'beginner': 'easy',
+          'intermediate': 'medium',
+          'advanced': 'hard'
+        };
+        const preBuiltDifficulty = difficultyMapRev[cs.difficulty_level] || 'medium';
+
+        // Check for existing pre-built entry referencing this case study
+        const [existing] = await db.query(
+          `SELECT id FROM pre_built_assessments WHERE JSON_EXTRACT(case_study_content, '$.source_case_study_id') = ? LIMIT 1`,
+          [caseStudyId]
+        );
+
+        if (!existing || existing.length === 0) {
+          // Insert new pre-built assessment
+          const [insertResult] = await db.query(
+            `INSERT INTO pre_built_assessments (title, title_ar, description, description_ar, category, difficulty_level, duration_minutes, num_questions, questions, case_study_content, is_active, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW())`,
+            [
+              cs.title || `Case Study #${caseStudyId}`,
+              cs.title_ar || cs.title || `Case Study #${caseStudyId}`,
+              cs.description || '',
+              cs.description_ar || cs.description || '',
+              'job_simulation',
+              preBuiltDifficulty,
+              cs.duration_minutes || 30,
+              preBuiltNumQuestions,
+              JSON.stringify(questions),
+              JSON.stringify(caseStudyContent)
+            ]
+          );
+
+          const newPreBuiltId = insertResult.insertId;
+          console.log(`✅ Created pre-built assessment from case study ${caseStudyId} (pre_built_assessments.id=${newPreBuiltId})`);
+
+          // Link case study back to newly created pre-built assessment
+          await db.query(
+            `UPDATE case_studies SET pre_built_assessment_id = ? WHERE id = ?`,
+            [newPreBuiltId, caseStudyId]
+          );
+        } else {
+          console.log(`ℹ️ Pre-built assessment already exists for case study ${caseStudyId}`);
+        }
+      } catch (err) {
+        console.error(`Error creating pre-built assessment for case study ${caseStudyId}:`, err.message);
+        // Do not abort the whole publish operation for a single pre-built creation error
       }
     }
 

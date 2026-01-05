@@ -50,6 +50,43 @@ const upload = multer({
   }
 });
 
+// Video upload configuration
+const videoUploadDir = path.join(__dirname, "../uploads/assessments/videos");
+
+const videoStorage = multer.diskStorage({
+  destination: async (req, file, cb) => {
+    try {
+      await fs.mkdir(videoUploadDir, { recursive: true });
+      cb(null, videoUploadDir);
+    } catch (err) {
+      cb(err);
+    }
+  },
+  filename: (req, file, cb) => {
+    const uniqueName = `video_${Date.now()}-${Math.random().toString(36).substr(2, 9)}.webm`;
+    cb(null, uniqueName);
+  }
+});
+
+const videoUpload = multer({
+  storage: videoStorage,
+  limits: { fileSize: 100 * 1024 * 1024 }, // 100MB for videos
+  fileFilter: (req, file, cb) => {
+    const allowedMimes = [
+      "video/webm",
+      "video/mp4",
+      "video/ogg",
+      "video/quicktime"
+    ];
+
+    if (allowedMimes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error("Invalid file type. Only video files (webm, mp4, ogg, mov) are allowed."));
+    }
+  }
+});
+
 // ============================================
 // TEXT EXTRACTION HELPER FUNCTION
 // ============================================
@@ -122,6 +159,48 @@ router.post(
   }
 );
 
+// POST /api/assessments/upload-video
+// Upload a video response for a custom question
+router.post(
+  "/upload-video",
+  authMiddleware,
+  videoUpload.single("video"),
+  async (req, res) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ error: "No video file provided" });
+      }
+
+      const { question_id } = req.body;
+
+      console.log(`🎥 Video uploaded: ${req.file.filename}`);
+      console.log(`📋 Question ID: ${question_id}`);
+      console.log(`📄 MIME Type: ${req.file.mimetype}`);
+      console.log(`📊 File Size: ${(req.file.size / 1024 / 1024).toFixed(2)} MB`);
+
+      // Generate accessible URL for the video (absolute URL so client hits backend directly)
+      const proto = req.headers['x-forwarded-proto'] ? req.headers['x-forwarded-proto'].split(',')[0] : req.protocol;
+      const host = req.get('host');
+      const videoUrl = `${proto}://${host}/uploads/assessments/videos/${req.file.filename}`;
+
+      res.json({
+        message: "Video uploaded successfully",
+        url: videoUrl,
+        file_name: req.file.filename,
+        file_size: req.file.size,
+        mime_type: req.file.mimetype,
+        uploaded_at: new Date().toISOString()
+      });
+
+    } catch (err) {
+      console.error("❌ Video upload error:", err);
+      res.status(500).json({
+        error: err.message || "Failed to upload video"
+      });
+    }
+  }
+);
+
 // POST /api/assessments/submit
 // Submit case study answers (text or file-based)
 router.post("/submit", authMiddleware, assessmentsController.submitAssessment);
@@ -156,6 +235,14 @@ router.get(
   "/case-studies/incomplete",
   authMiddleware,
   assessmentsController.getIncompleteCaseStudy
+);
+
+// PUT /api/assessments/feedback/:feedbackId/question/:questionId/score
+// Score a custom question in a feedback submission
+router.put(
+  "/feedback/:feedbackId/question/:questionId/score",
+  authMiddleware,
+  assessmentsController.scoreCustomQuestion
 );
 
 module.exports = router;

@@ -246,10 +246,13 @@ async function detectAIWithCopyleaks(text, questionNumber) {
   }
 
   try {
-    const scanId = `q${questionNumber}_${Date.now()}`;
+    // Sanitize questionNumber/tag for Copyleaks scanId (allowed: lowercase a-z and 0-9 and some punctuation).
+    const rawTag = String(questionNumber || '').toLowerCase();
+    const safeTag = rawTag.replace(/[^a-z0-9]/g, '');
+    const scanId = `q${safeTag || Date.now()}_${Date.now()}`;
     const token = await getCopyleaksToken();
 
-    console.log(`Submitting text to Copyleaks: ${scanId}`);
+    console.log(`Submitting text to Copyleaks: ${scanId} (original tag: ${String(questionNumber)})`);
     const result = await submitToCopyleaks(text, scanId, token);
 
     const classification =
@@ -269,7 +272,7 @@ async function detectAIWithCopyleaks(text, questionNumber) {
       details: result
     };
   } catch (error) {
-    console.error("Copyleaks detection error:", error.message);
+    console.error("Copyleaks detection error:", error.response?.data || error.message || error);
     return detectAIPatterns(text);
   }
 }
@@ -579,7 +582,8 @@ async function triggerAsyncEvaluation(submissionId) {
         cs.title as case_study_title,
         cs.description as case_study_description,
         cs.enable_psychometrics,
-        cs.psychometric_types
+        cs.psychometric_types,
+        f.anti_cheat_data
       FROM feedbacks f
       LEFT JOIN applicant_profiles ap ON f.applicant_id = ap.id
       LEFT JOIN users u ON ap.user_id = u.id
@@ -596,6 +600,19 @@ async function triggerAsyncEvaluation(submissionId) {
     }
 
     const submission = submissions[0];
+    
+    // Parse anti-cheat data
+    let antiCheatData = null;
+    try {
+      if (submission.anti_cheat_data) {
+        antiCheatData = typeof submission.anti_cheat_data === 'string' 
+          ? JSON.parse(submission.anti_cheat_data) 
+          : submission.anti_cheat_data;
+        console.log(`🛡️ Anti-cheating data loaded:`, antiCheatData);
+      }
+    } catch (e) {
+      console.warn('⚠️ Error parsing anti_cheat_data:', e);
+    }
 
     if (submission.result_generated === 1) {
       console.log(`⚠️ Result already generated for submission ${submissionId}`);
@@ -617,10 +634,88 @@ async function triggerAsyncEvaluation(submissionId) {
     }
 
     const [questionRows] = await db.query(
-      'SELECT question FROM case_study_questions WHERE case_study_id = ? ORDER BY id',
+      'SELECT id, question, weight FROM case_study_questions WHERE case_study_id = ? ORDER BY id',
       [submission.case_study_id]
     );
     const questions = questionRows.map(q => q.question);
+    const caseStudyQuestionWeights = questionRows.map(q => parseFloat(q.weight) || 1.0);
+    console.log(`📋 Case study questions: ${questions.length}, Weights: [${caseStudyQuestionWeights.join(', ')}]`);
+
+    // FETCH CUSTOM QUESTIONS
+    console.log('📝 Fetching custom questions...');
+    const [customQuestionRows] = await db.query(
+      'SELECT * FROM custom_questions WHERE case_study_id = ? ORDER BY id',
+      [submission.case_study_id]
+    );
+    console.log(`✅ Found ${customQuestionRows.length} custom questions`);
+    if (customQuestionRows.length > 0) {
+      console.log(`📊 Custom question weights: [${customQuestionRows.map(q => parseFloat(q.weight) || 1.0).join(', ')}]`);
+    }
+
+    // Parse custom answers
+    let customAnswers = [];
+    try {
+      if (submission.custom_answers) {
+        customAnswers = typeof submission.custom_answers === 'string' 
+          ? JSON.parse(submission.custom_answers) 
+          : submission.custom_answers;
+      }
+    } catch (e) {
+      console.warn('⚠️ Error parsing custom answers:', e);
+    }
+    console.log(`✅ Found ${customAnswers.length} custom answers`);
+    console.log('📦 Custom answers data structure:', JSON.stringify(customAnswers, null, 2));
+
+    // AUTO-SCORE MCQ QUESTIONS
+    const mcqAutoScores = [];
+    for (const cq of customQuestionRows) {
+      if (cq.question_type === 'mcq') {
+        // Support both frontend format (question_id, answer) and legacy format (questionId, selectedOptions)
+        const answer = customAnswers.find(a => (a.question_id === cq.id) || (a.questionId === cq.id));
+        console.log(`🔍 MCQ Q${cq.id}: Looking for answer, found:`, answer ? JSON.stringify(answer) : 'NOT FOUND');
+        
+        let options = [];
+        try {
+          options = typeof cq.options === 'string' ? JSON.parse(cq.options) : (cq.options || []);
+        } catch(e) { options = []; }
+        
+        const correctOptions = options.filter(opt => opt.is_correct);
+        // Support both formats: answer.answer (frontend) or answer.selectedOptions (legacy)
+        const selectedOptionIds = answer?.answer || answer?.selectedOptions || [];
+        console.log(`   Selected: [${selectedOptionIds.join(', ')}], Correct: [${correctOptions.map(o => o.id).join(', ')}]`);
+        
+        // Score based on correct selections
+        let mcqScore = 0;
+        if (correctOptions.length > 0 && selectedOptionIds.length > 0) {
+          const correctIds = correctOptions.map(opt => opt.id);
+          const correctSelections = selectedOptionIds.filter(id => correctIds.includes(id)).length;
+          const incorrectSelections = selectedOptionIds.filter(id => !correctIds.includes(id)).length;
+          
+          // Formula: (correct - incorrect) / total_correct * 100, min 0
+          mcqScore = Math.max(0, Math.round(((correctSelections - incorrectSelections) / correctOptions.length) * 100));
+        }
+        console.log(`   Score: ${mcqScore}/100`);
+        
+        mcqAutoScores.push({
+          questionId: cq.id,
+          question_type: 'mcq',
+          score: mcqScore,
+          selectedOptions: selectedOptionIds,
+          correctOptions: correctOptions.map(opt => opt.id),
+          feedback_en: mcqScore === 100 
+            ? 'All correct options selected.' 
+            : mcqScore > 0 
+              ? 'Partially correct answer.' 
+              : 'Incorrect answer.',
+          feedback_ar: mcqScore === 100 
+            ? 'تم اختيار جميع الخيارات الصحيحة.' 
+            : mcqScore > 0 
+              ? 'إجابة صحيحة جزئياً.' 
+              : 'إجابة غير صحيحة.'
+        });
+      }
+    }
+    console.log(`✅ Auto-scored ${mcqAutoScores.length} MCQ questions`);
 
     // FETCH JOB SKILLS (if job_id exists)
     console.log('🔧 Fetching job skills...');
@@ -706,9 +801,10 @@ async function triggerAsyncEvaluation(submissionId) {
       console.log('ℹ️ Psychometrics not enabled for this case study');
     }
 
-    console.log('🔍 Running AI detection on answers...');
+    console.log('🔍 Running AI detection on case study answers and custom (module) answers...');
     const aiDetectionResults = [];
     
+    // AI detection for case study questions (answers[])
     for (let i = 0; i < answers.length; i++) {
       const answerText = answers[i];
       
@@ -729,17 +825,70 @@ async function triggerAsyncEvaluation(submissionId) {
         aiDetectionResults.push(detectAIPatterns(answerText));
       }
     }
-    
-    const aiDetectedCount = aiDetectionResults.filter(r => r.isAI && r.source !== 'skipped').length;
-    const totalProcessedAnswers = aiDetectionResults.filter(r => r.source !== 'skipped').length;
-    const avgConfidence = aiDetectionResults.filter(r => r.source !== 'skipped').reduce((sum, r) => sum + parseFloat(r.confidence || 0), 0) / (totalProcessedAnswers || 1);
-    
+
+    // AI detection for custom questions (modules)
+    const customAiDetectionResults = [];
+    const aiEvaluatedCustomQs = customQuestionRows.filter(cq => 
+      ['coding', 'sql', 'open_ended', 'video', 'video_response', 'excel', 'writing', 'situational_judgment', 'situational'].includes(cq.question_type)
+    );
+
+    for (let i = 0; i < aiEvaluatedCustomQs.length; i++) {
+      const cq = aiEvaluatedCustomQs[i];
+      // Find the submitted answer for this custom question
+      const answer = customAnswers.find(a => (a.question_id === cq.id) || (a.questionId === cq.id));
+      let answerText = '';
+
+      if (!answer) {
+        customAiDetectionResults.push({ isAI: false, confidence: 0, source: 'skipped' });
+        continue;
+      }
+
+      // Extract text from various possible answer formats
+      if (answer.answer) {
+        if (typeof answer.answer === 'object') {
+          if (answer.answer.url) answerText = answer.answer.url;
+          else answerText = JSON.stringify(answer.answer);
+        } else {
+          answerText = answer.answer;
+        }
+      } else if (answer.code) {
+        answerText = answer.code;
+      } else if (answer.videoUrl) {
+        // For video answers we don't run Copyleaks; skip detection
+        customAiDetectionResults.push({ isAI: false, confidence: 0, source: 'skipped' });
+        continue;
+      }
+
+      if (!answerText || (typeof answerText === 'string' && answerText.trim().length < 50)) {
+        customAiDetectionResults.push({ isAI: false, confidence: 0, source: 'skipped' });
+        continue;
+      }
+
+      if (answerText.trim().length < 100) {
+        customAiDetectionResults.push(detectAIPatterns(answerText));
+        continue;
+      }
+
+      try {
+        customAiDetectionResults.push(await detectAIWithCopyleaks(answerText, `CQ${cq.id}`));
+      } catch (err) {
+        console.warn(`⚠️ CQ${cq.id}: Copyleaks failed, using pattern detection`);
+        customAiDetectionResults.push(detectAIPatterns(answerText));
+      }
+    }
+
+    // Aggregate detection results
+    const allDetectionResults = [...aiDetectionResults, ...customAiDetectionResults];
+    const aiDetectedCount = allDetectionResults.filter(r => r.isAI && r.source !== 'skipped').length;
+    const totalProcessedAnswers = allDetectionResults.filter(r => r.source !== 'skipped').length;
+    const avgConfidence = allDetectionResults.filter(r => r.source !== 'skipped').reduce((sum, r) => sum + parseFloat(r.confidence || 0), 0) / (totalProcessedAnswers || 1);
+
     console.log(`✅ AI Detection Complete\n`);
 
     const generateEvaluation = async (language) => {
       console.log(`🌍 Generating ${language} evaluation...`);
       
-      const aiDetectionSummary = aiDetectionResults
+      const questionAiSummary = aiDetectionResults
         .map((result, idx) => {
           if (result.source === 'skipped') return null;
           const prob = parseFloat(result.confidence || 0).toFixed(1);
@@ -747,6 +896,19 @@ async function triggerAsyncEvaluation(submissionId) {
         })
         .filter(Boolean)
         .join('\n');
+
+      const customAiSummary = (customAiDetectionResults || [])
+        .map((result, idx) => {
+          if (result.source === 'skipped') return null;
+          const prob = parseFloat(result.confidence || 0).toFixed(1);
+          const cq = aiEvaluatedCustomQs[idx];
+          const label = cq ? `CQ${cq.id}` : `CQ${idx+1}`;
+          return `${label}: ${prob}% AI probability (${result.source})`;
+        })
+        .filter(Boolean)
+        .join('\n');
+
+      const aiDetectionSummary = [questionAiSummary, customAiSummary].filter(Boolean).join('\n');
       
       const hasAIDetection = aiDetectedCount > 0;
       const aiWarning = hasAIDetection 
@@ -783,6 +945,74 @@ For EACH skill, provide:
 - Assessment of proficiency level`
         : '';
 
+      // BUILD CUSTOM QUESTIONS SECTION (for AI-evaluated types)
+      const customQuestionsSection = aiEvaluatedCustomQs.length > 0
+        ? `
+
+CUSTOM ASSESSMENT QUESTIONS TO EVALUATE (${aiEvaluatedCustomQs.length} total):
+${aiEvaluatedCustomQs.map((cq, idx) => {
+  // Support both frontend format (question_id) and legacy format (questionId)
+  const answer = customAnswers.find(a => (a.question_id === cq.id) || (a.questionId === cq.id));
+  const questionText = language === 'Arabic' ? (cq.question_text_ar || cq.question_text) : (cq.question_text || cq.question_text_ar);
+  
+  // Handle different answer formats
+  let answerContent = 'NO ANSWER PROVIDED';
+  if (answer?.answer) {
+    if (typeof answer.answer === 'object') {
+      // Video response object with url, duration, etc.
+      if (answer.answer.url) {
+        answerContent = `[VIDEO SUBMITTED] URL: ${answer.answer.url}, Duration: ${answer.answer.duration || 'unknown'}s`;
+      } else if (answer.answer.type === 'video') {
+        answerContent = `[VIDEO SUBMITTED] Duration: ${answer.answer.duration || 'unknown'}s`;
+      } else {
+        answerContent = JSON.stringify(answer.answer);
+      }
+    } else {
+      answerContent = answer.answer;
+    }
+  } else if (answer?.code) {
+    answerContent = answer.code;
+  } else if (answer?.videoUrl) {
+    answerContent = `[VIDEO SUBMITTED] URL: ${answer.videoUrl}`;
+  }
+  
+  // AI detection note for this custom question (if available)
+  const aiInfo = (customAiDetectionResults || [])[idx];
+  const aiNote = aiInfo && aiInfo.source !== 'skipped' && aiInfo.confidence > 60
+    ? ` [⚠️ AI Detection: ${parseFloat(aiInfo.confidence).toFixed(1)}%]`
+    : '';
+  
+  let typeLabel = cq.question_type;
+  if (cq.question_type === 'coding') typeLabel = 'Code Challenge';
+  if (cq.question_type === 'sql') typeLabel = 'SQL Query';
+  if (cq.question_type === 'open_ended') typeLabel = 'Open-Ended';
+  if (cq.question_type === 'video' || cq.question_type === 'video_response') typeLabel = 'Video Response';
+  if (cq.question_type === 'excel') typeLabel = 'Excel Task';
+  if (cq.question_type === 'writing') typeLabel = 'Writing Exercise';
+  if (cq.question_type === 'situational_judgment' || cq.question_type === 'situational') typeLabel = 'Situational Judgment';
+  
+  // Get weight for this question
+  const weight = cq.weight || 1.0;
+  const weightLabel = weight !== 1.0 ? ` [Weight: ${weight}x]` : '';
+  
+  let extraContext = '';
+  if (cq.expected_output) extraContext += `\n   Expected Output: ${cq.expected_output}`;
+  if (cq.evaluation_criteria) extraContext += `\n   Evaluation Criteria: ${cq.evaluation_criteria}`;
+  if (cq.max_score) extraContext += `\n   Max Score: ${cq.max_score}`;
+  
+  return `CQ${idx + 1} [${typeLabel}]${weightLabel} (ID: ${cq.id}):\n   Question: ${questionText}${extraContext}\n   Answer: ${answerContent}${aiNote}`;
+}).join('\n\n')}
+
+CUSTOM QUESTION SCORING INSTRUCTIONS:
+- Questions with higher weights are MORE IMPORTANT and should be evaluated more thoroughly
+- For coding/SQL questions: Evaluate correctness, efficiency, best practices, edge cases
+- For open-ended/writing: Evaluate clarity, depth, relevance, structure
+- For video responses: Return score as null and feedback "Pending manual review - recruiter must watch and score the video submission". Video responses CANNOT be auto-scored.
+- For Excel tasks: Evaluate formula correctness, data analysis approach
+- For situational judgment: Evaluate decision-making, reasoning, practical application
+- Score each on 0-100 scale with detailed feedback (except video which should be null)`
+        : '';
+
       const prompt = `You are a STRICT and CRITICAL Technical Recruiter evaluating case study submissions.
 
 CRITICAL EVALUATION STANDARDS:
@@ -815,19 +1045,25 @@ ${psychometricsSection}
 
 ${skillsSection}
 
+${customQuestionsSection}
+
 CRITICAL: ALL TEXT FEEDBACK MUST BE IN ${language}.
 
 JOB/ASSESSMENT: ${submission.job_title || submission.case_study_title}
 CANDIDATE: ${submission.applicant_name || 'Not provided'}
 
-QUESTIONS AND ANSWERS:
+CASE STUDY QUESTIONS AND ANSWERS:
 ${questions.map((q, i) => {
   const aiInfo = aiDetectionResults[i];
   const aiNote = aiInfo && aiInfo.source !== 'skipped' && aiInfo.confidence > 60
     ? ` [⚠️ AI Detection: ${parseFloat(aiInfo.confidence).toFixed(1)}%]`
     : '';
-  return `Q${i+1}: ${q}${aiNote}\nA: ${answers[i] || 'NO ANSWER'}`;
+  const weight = caseStudyQuestionWeights[i] || 1.0;
+  const weightNote = weight !== 1.0 ? ` [Weight: ${weight}x]` : '';
+  return `Q${i+1}${weightNote}: ${q}${aiNote}\nA: ${answers[i] || 'NO ANSWER'}`;
 }).join('\n\n')}
+
+NOTE: Questions with higher weights are MORE IMPORTANT and should be evaluated more thoroughly.
 
 RETURN ONLY VALID JSON (no markdown, no explanations):
 {
@@ -855,6 +1091,13 @@ RETURN ONLY VALID JSON (no markdown, no explanations):
     "description": "${p.description}",
     "score": <0-10 with evidence>,
     "evidence": "<Specific evidence from answers in ${language}>"
+  }`).join(',')}],
+  "custom_question_scores": [${aiEvaluatedCustomQs.map(cq => `{
+    "question_id": ${cq.id},
+    "question_type": "${cq.question_type}",
+    "score": <0-100>,
+    "feedback": "<Detailed feedback in ${language}>",
+    "code_quality": ${cq.question_type === 'coding' || cq.question_type === 'sql' ? '"<Evaluation of code quality>"' : 'null'}
   }`).join(',')}],
   "final_recommendation": "<Hire|Interview|Review|Reject>"
 }`;
@@ -924,6 +1167,43 @@ RETURN ONLY VALID JSON (no markdown, no explanations):
 
       console.log(`   🔧 Skill Scores: ${evaluation.skill_scores.length}`);
 
+      // VALIDATE AND MERGE CUSTOM QUESTION SCORES
+      if (!evaluation.custom_question_scores) {
+        evaluation.custom_question_scores = [];
+      }
+
+      // Add MCQ auto-scores
+      const mcqScoresForLang = mcqAutoScores.map(mcq => ({
+        question_id: mcq.questionId,
+        question_type: 'mcq',
+        score: mcq.score,
+        feedback: language === 'Arabic' ? mcq.feedback_ar : mcq.feedback_en,
+        auto_scored: true
+      }));
+      
+      evaluation.custom_question_scores = [...mcqScoresForLang, ...evaluation.custom_question_scores];
+      
+      // Validate all AI-evaluated questions have scores
+      const scoredCustomQIds = evaluation.custom_question_scores.map(cq => cq.question_id);
+      const missingCustomQs = aiEvaluatedCustomQs.filter(cq => !scoredCustomQIds.includes(cq.id));
+      
+      if (missingCustomQs.length > 0) {
+        console.warn(`⚠️ Missing ${missingCustomQs.length} custom question scores, adding defaults`);
+        missingCustomQs.forEach(cq => {
+          evaluation.custom_question_scores.push({
+            question_id: cq.id,
+            question_type: cq.question_type,
+            score: 0,
+            feedback: language === 'Arabic' 
+              ? 'لم يتم تقديم إجابة أو لم يتمكن النظام من تقييم هذا السؤال'
+              : 'No answer provided or system could not evaluate this question',
+            code_quality: null
+          });
+        });
+      }
+      
+      console.log(`   📝 Custom Question Scores: ${evaluation.custom_question_scores.length}`);
+
       // VALIDATE QUESTION SCORES
       if (evaluation.question_scores && Array.isArray(evaluation.question_scores)) {
         for (let qIdx = 0; qIdx < evaluation.question_scores.length; qIdx++) {
@@ -948,8 +1228,90 @@ RETURN ONLY VALID JSON (no markdown, no explanations):
         }
       }
 
-      // Calculate overall score from question scores
+      // ============================================
+      // WEIGHTED OVERALL SCORE CALCULATION
+      // ============================================
+      // Combine case study questions and custom questions with their weights
+      console.log(`\n📐 Starting weighted score calculation for ${language}...`);
+      
+      let totalWeightedScore = 0;
+      let totalWeight = 0;
+      
+      // Case study questions with their individual weights
       if (evaluation.question_scores?.length > 0) {
+        console.log(`   📋 Case Study Questions (${evaluation.question_scores.length}):`);
+        evaluation.question_scores.forEach((qScore, idx) => {
+          const weight = caseStudyQuestionWeights[idx] || 1.0;
+          const score = qScore.score || 0;
+          const weightedScore = score * weight;
+          totalWeightedScore += weightedScore;
+          totalWeight += weight;
+          
+          console.log(`      Q${idx + 1}: Score=${score}, Weight=${weight}, Weighted=${weightedScore.toFixed(2)}`);
+          
+          // Add weight info to the score object for transparency
+          qScore.weight = weight;
+        });
+      }
+      
+      // Custom questions with their individual weights
+      if (evaluation.custom_question_scores?.length > 0) {
+        console.log(`   📝 Custom Questions (${evaluation.custom_question_scores.length}):`);
+        evaluation.custom_question_scores.forEach((cqScore, idx) => {
+          // Find the weight from customQuestionRows
+          const customQ = customQuestionRows.find(cq => cq.id === cqScore.question_id);
+          const weight = parseFloat(customQ?.weight) || 1.0;
+          const score = cqScore.score || 0;
+          const weightedScore = score * weight;
+          totalWeightedScore += weightedScore;
+          totalWeight += weight;
+          
+          console.log(`      CQ${idx + 1} (ID:${cqScore.question_id}): Score=${score}, Weight=${weight}, Weighted=${weightedScore.toFixed(2)}, Type=${customQ?.question_type || 'unknown'}`);
+          
+          // Add weight info to the score object for transparency
+          cqScore.weight = weight;
+        });
+      }
+      
+      console.log(`   📊 Total: WeightedScore=${totalWeightedScore.toFixed(2)}, TotalWeight=${totalWeight.toFixed(2)}`)
+      
+      // Calculate weighted average
+      if (totalWeight > 0) {
+        let weightedAvg = Math.round(totalWeightedScore / totalWeight);
+        
+        // Apply anti-cheating penalty if violations detected
+        let antiCheatPenalty = 0;
+        if (antiCheatData?.violations_detected) {
+          // Penalty: -5 points per tab switch, max 25 point penalty
+          const tabSwitchPenalty = Math.min((antiCheatData.tab_switches || 0) * 5, 25);
+          // Additional penalty if fullscreen was not maintained when required
+          const fullscreenPenalty = antiCheatData.fullscreen_maintained === false ? 10 : 0;
+          antiCheatPenalty = tabSwitchPenalty + fullscreenPenalty;
+          
+          if (antiCheatPenalty > 0) {
+            console.log(`   ⚠️ Anti-cheating penalty: -${antiCheatPenalty} points (Tab switches: ${antiCheatData.tab_switches}, Fullscreen: ${antiCheatData.fullscreen_maintained})`);
+            weightedAvg = Math.max(0, weightedAvg - antiCheatPenalty);
+          }
+        }
+        
+        evaluation.overall_score = weightedAvg;
+        evaluation.rating = weightedAvg >= 85 ? 'Excellent' : weightedAvg >= 75 ? 'Good' : weightedAvg >= 55 ? 'Fair' : 'Poor';
+        evaluation.final_recommendation = weightedAvg >= 75 ? 'Interview' : weightedAvg >= 60 ? 'Review' : 'Reject';
+        
+        // Store scoring breakdown
+        evaluation.score_breakdown = {
+          case_study_questions_count: evaluation.question_scores?.length || 0,
+          custom_questions_count: evaluation.custom_question_scores?.length || 0,
+          total_weight: totalWeight,
+          weighted_score: totalWeightedScore,
+          anti_cheat_penalty: antiCheatPenalty,
+          anti_cheat_data: antiCheatData,
+          calculation_method: 'weighted_average'
+        };
+        
+        console.log(`   📊 Weighted Score: ${weightedAvg}/100 (Total Weight: ${totalWeight.toFixed(2)}, Penalty: ${antiCheatPenalty})`);
+      } else if (evaluation.question_scores?.length > 0) {
+        // Fallback to simple average if no weights
         const avg = Math.round(
           evaluation.question_scores.reduce((sum, q) => sum + (q.score || 0), 0) / 
           evaluation.question_scores.length
@@ -960,7 +1322,7 @@ RETURN ONLY VALID JSON (no markdown, no explanations):
       }
 
       console.log(`   ✅ ${language}: ${evaluation.overall_score}/100 (${evaluation.rating})`);
-      console.log(`   🧠 Psychometrics: ${evaluation.psychometric_scores?.length || 0} | 🔧 Skills: ${evaluation.skill_scores?.length || 0}`);
+      console.log(`   🧠 Psychometrics: ${evaluation.psychometric_scores?.length || 0} | 🔧 Skills: ${evaluation.skill_scores?.length || 0} | 📝 Custom Qs: ${evaluation.custom_question_scores?.length || 0}`);
       return evaluation;
     };
 
@@ -990,11 +1352,36 @@ RETURN ONLY VALID JSON (no markdown, no explanations):
       });
     }
 
+    // Merge AI detection into custom (module) question scores by matching question_id
+    if (evaluationEN.custom_question_scores && Array.isArray(evaluationEN.custom_question_scores)) {
+      evaluationEN.custom_question_scores = evaluationEN.custom_question_scores.map((cqScore) => {
+        const cqIndex = aiEvaluatedCustomQs.findIndex(cq => cq.id === cqScore.question_id);
+        const aiResult = (customAiDetectionResults && customAiDetectionResults[cqIndex]) || { isAI: false, confidence: 0, source: 'unknown' };
+        return {
+          ...cqScore,
+          ai_suspected: aiResult.isAI || false,
+          ai_probability: parseFloat(aiResult.confidence || 0)
+        };
+      });
+    }
+
+    if (evaluationAR.custom_question_scores && Array.isArray(evaluationAR.custom_question_scores)) {
+      evaluationAR.custom_question_scores = evaluationAR.custom_question_scores.map((cqScore) => {
+        const cqIndex = aiEvaluatedCustomQs.findIndex(cq => cq.id === cqScore.question_id);
+        const aiResult = (customAiDetectionResults && customAiDetectionResults[cqIndex]) || { isAI: false, confidence: 0, source: 'unknown' };
+        return {
+          ...cqScore,
+          ai_suspected: aiResult.isAI || false,
+          ai_probability: parseFloat(aiResult.confidence || 0)
+        };
+      });
+    }
+
     const overallAIDetected = aiDetectedCount > 0;
 
     console.log('✅ Evaluation complete - saving to database');
-    console.log(`   EN: Score ${evaluationEN.overall_score} | Psychometrics: ${evaluationEN.psychometric_scores?.length} | Skills: ${evaluationEN.skill_scores?.length}`);
-    console.log(`   AR: Score ${evaluationAR.overall_score} | Psychometrics: ${evaluationAR.psychometric_scores?.length} | Skills: ${evaluationAR.skill_scores?.length}`);
+    console.log(`   EN: Score ${evaluationEN.overall_score} | Psychometrics: ${evaluationEN.psychometric_scores?.length} | Skills: ${evaluationEN.skill_scores?.length} | Custom Qs: ${evaluationEN.custom_question_scores?.length}`);
+    console.log(`   AR: Score ${evaluationAR.overall_score} | Psychometrics: ${evaluationAR.psychometric_scores?.length} | Skills: ${evaluationAR.skill_scores?.length} | Custom Qs: ${evaluationAR.custom_question_scores?.length}`);
 
     await db.query(
       `UPDATE feedbacks SET 
@@ -1009,6 +1396,8 @@ RETURN ONLY VALID JSON (no markdown, no explanations):
         skill_scores_ar = ?, 
         psychometric_scores = ?,
         psychometric_scores_ar = ?,
+        custom_question_scores = ?,
+        custom_question_scores_ar = ?,
         final_recommendation = ?, 
         result_generated = 1, 
         status = 'completed', 
@@ -1026,6 +1415,8 @@ RETURN ONLY VALID JSON (no markdown, no explanations):
         JSON.stringify(evaluationAR.skill_scores || []),
         JSON.stringify(evaluationEN.psychometric_scores || []),
         JSON.stringify(evaluationAR.psychometric_scores || []),
+        JSON.stringify(evaluationEN.custom_question_scores || []),
+        JSON.stringify(evaluationAR.custom_question_scores || []),
         evaluationEN.final_recommendation || 'Review', 
         submissionId
       ]
@@ -1034,7 +1425,7 @@ RETURN ONLY VALID JSON (no markdown, no explanations):
     console.log(`${'═'.repeat(70)}`);
     console.log(`✅ ASYNC EVALUATION COMPLETE`);
     console.log(`   Score: ${evaluationEN.overall_score}/100 | Rating: ${evaluationEN.rating}`);
-    console.log(`   Psychometrics: ${evaluationEN.psychometric_scores?.length} | Skills: ${evaluationEN.skill_scores?.length}`);
+    console.log(`   Psychometrics: ${evaluationEN.psychometric_scores?.length} | Skills: ${evaluationEN.skill_scores?.length} | Custom Qs: ${evaluationEN.custom_question_scores?.length}`);
     console.log(`${'═'.repeat(70)}\n`);
 
   } catch (err) {
@@ -1053,7 +1444,12 @@ exports.submitAssessment = async (req, res) => {
     console.log('🚀 START: submitAssessment');
 
     const user = req.user;
-    const { case_study_id, answers, job_id } = req.body;
+    const { case_study_id, answers, job_id, custom_answers, anti_cheat_data } = req.body;
+    
+    // Log anti-cheating data if present
+    if (anti_cheat_data) {
+      console.log('🛡️ Anti-cheating data received:', anti_cheat_data);
+    }
 
     let applicantId, jobApplicationId = null;
 
@@ -1133,7 +1529,36 @@ exports.submitAssessment = async (req, res) => {
       }
     }
 
-    if (!answerValidation.some(v => v.isValid)) {
+    // Check processed text/file answers
+    const hasValidTextAnswers = answerValidation.some(v => v.isValid);
+
+    // Parse and validate custom answers (assessment modules)
+    let parsedCustomAnswers = custom_answers;
+    if (typeof parsedCustomAnswers === 'string') {
+      try { parsedCustomAnswers = JSON.parse(parsedCustomAnswers); } catch (e) { parsedCustomAnswers = null; }
+    }
+
+    const hasValidCustomAnswers = Array.isArray(parsedCustomAnswers) && parsedCustomAnswers.some(ca => {
+      const a = ca?.answer;
+      if (a === undefined || a === null) return false;
+      if (typeof a === 'string') {
+        const s = a.trim();
+        if (!s) return false;
+        const low = s.toLowerCase();
+        return low !== 'na' && low !== 'n/a';
+      }
+      if (Array.isArray(a)) return a.length > 0;
+      if (typeof a === 'object') {
+        // Consider answers with a non-empty URL, type, or non-empty object as valid
+        if (a.url || a.type) return true;
+        return Object.keys(a).length > 0 && Object.values(a).some(v => v !== null && v !== '');
+      }
+      return true;
+    });
+
+    console.log(`📝 Answer validation: textValid=${hasValidTextAnswers}, customValid=${hasValidCustomAnswers}, textCount=${answerValidation.length}, customCount=${Array.isArray(parsedCustomAnswers)?parsedCustomAnswers.length:0}`);
+
+    if (!hasValidTextAnswers && !hasValidCustomAnswers) {
       await connection.rollback();
       return res.status(400).json({ error: 'Please provide answers to at least one question' });
     }
@@ -1142,12 +1567,28 @@ exports.submitAssessment = async (req, res) => {
     await connection.query('UPDATE job_applications SET status = ?, updated_at = NOW() WHERE id = ?', ['case_study_completed', jobApplicationId]);
 
     const answerContent = JSON.stringify(processedAnswers);
+    const customAnswerContent = custom_answers ? JSON.stringify(custom_answers) : null;
+    const antiCheatContent = anti_cheat_data ? JSON.stringify(anti_cheat_data) : null;
+    
     let insertResult;
     
     if (user.user_type === 'case_study_applicant') {
-      [insertResult] = await connection.query(`INSERT INTO feedbacks (job_application_id, job_id, case_study_id, title, submitted_time, answers, status, result_generated, created_at, updated_at) VALUES (?, ?, ?, ?, NOW(), ?, 'pending', 0, NOW(), NOW())`, [jobApplicationId, job_id, case_study_id, caseStudy.title, answerContent]);
+      [insertResult] = await connection.query(
+        `INSERT INTO feedbacks (job_application_id, job_id, case_study_id, title, submitted_time, answers, custom_answers, anti_cheat_data, status, result_generated, created_at, updated_at) 
+         VALUES (?, ?, ?, ?, NOW(), ?, ?, ?, 'pending', 0, NOW(), NOW())`, 
+        [jobApplicationId, job_id, case_study_id, caseStudy.title, answerContent, customAnswerContent, antiCheatContent]
+      );
     } else {
-      [insertResult] = await connection.query(`INSERT INTO feedbacks (applicant_id, job_application_id, job_id, case_study_id, title, submitted_time, answers, status, result_generated, created_at, updated_at) VALUES (?, ?, ?, ?, ?, NOW(), ?, 'pending', 0, NOW(), NOW())`, [applicantId, jobApplicationId, job_id, case_study_id, caseStudy.title, answerContent]);
+      [insertResult] = await connection.query(
+        `INSERT INTO feedbacks (applicant_id, job_application_id, job_id, case_study_id, title, submitted_time, answers, custom_answers, anti_cheat_data, status, result_generated, created_at, updated_at) 
+         VALUES (?, ?, ?, ?, ?, NOW(), ?, ?, ?, 'pending', 0, NOW(), NOW())`, 
+        [applicantId, jobApplicationId, job_id, case_study_id, caseStudy.title, answerContent, customAnswerContent, antiCheatContent]
+      );
+    }
+    
+    // Log anti-cheating violations if any
+    if (anti_cheat_data?.violations_detected) {
+      console.log(`⚠️ Anti-cheating violations detected for submission: Tab switches: ${anti_cheat_data.tab_switches}, Fullscreen: ${anti_cheat_data.fullscreen_maintained}`);
     }
 
     await connection.commit();
@@ -1161,11 +1602,27 @@ exports.submitAssessment = async (req, res) => {
       validAnswers: answerValidation.filter(v => v.isValid).length
     });
 
+    // Trigger async evaluation now and schedule fallback retries in case of transient failures
     setImmediate(() => {
       triggerAsyncEvaluation(submissionId).catch(err => {
         console.error(`Async evaluation error:`, err.message);
       });
     });
+
+    // Schedule retries: try again after 10s and 30s if result still not generated
+    setTimeout(() => {
+      console.log(`🔁 Retry: attempting async evaluation for submission ${submissionId} (retry 1)`);
+      triggerAsyncEvaluation(submissionId).catch(err => {
+        console.error(`Retry 1 evaluation error for submission ${submissionId}:`, err.message);
+      });
+    }, 10 * 1000);
+
+    setTimeout(() => {
+      console.log(`🔁 Retry: attempting async evaluation for submission ${submissionId} (retry 2)`);
+      triggerAsyncEvaluation(submissionId).catch(err => {
+        console.error(`Retry 2 evaluation error for submission ${submissionId}:`, err.message);
+      });
+    }, 30 * 1000);
 
   } catch (err) {
     await connection.rollback();
@@ -1194,6 +1651,7 @@ exports.generateResult = async (req, res) => {
 
 exports.getRecruiterSubmissions = async (req, res) => {
   try {
+    console.log('🔍 getRecruiterSubmissions called');
     const user = req.user;
 
     if (user.user_type !== 'recruiter') {
@@ -1223,6 +1681,7 @@ exports.getRecruiterSubmissions = async (req, res) => {
         f.score,
         f.rating,
         f.answers,
+        f.custom_answers,
         f.feedback_text,
         f.feedback_text_ar,
         f.ai_detected,
@@ -1232,6 +1691,8 @@ exports.getRecruiterSubmissions = async (req, res) => {
         f.skill_scores_ar,
         f.psychometric_scores,
         f.psychometric_scores_ar,
+        f.custom_question_scores,
+        f.custom_question_scores_ar,
         f.final_recommendation,
         f.status,
         f.result_generated,
@@ -1240,19 +1701,42 @@ exports.getRecruiterSubmissions = async (req, res) => {
         COALESCE(u.email, ja.email) as applicant_email,
         COALESCE(ap.title, ja.last_job_title) as applicant_title,
         j.title as job_title,
-        cs.title as case_study_title_fallback
+        cs.title as case_study_title_fallback,
+        sess.id as session_id,
+        sess.integrity_score as session_integrity_score,
+        sess.warnings_issued as session_warnings_issued,
+        sess.total_time_spent as session_time_spent,
+        sess.status as session_status
       FROM feedbacks f
       LEFT JOIN applicant_profiles ap ON f.applicant_id = ap.id
       LEFT JOIN users u ON ap.user_id = u.id
       LEFT JOIN job_applications ja ON f.job_application_id = ja.id
       LEFT JOIN jobs j ON f.job_id = j.id
       LEFT JOIN case_studies cs ON f.case_study_id = cs.id
+      LEFT JOIN assessment_sessions sess ON sess.id = (
+        SELECT s2.id FROM assessment_sessions s2
+        WHERE s2.applicant_id = f.applicant_id
+          AND (
+            (f.case_study_id IS NOT NULL AND s2.case_study_id = f.case_study_id)
+            OR (f.job_application_id IS NOT NULL AND s2.application_id = f.job_application_id)
+          )
+        ORDER BY s2.created_at DESC
+        LIMIT 1
+      )
       WHERE (j.recruiter_id = ? OR (f.job_id IS NULL AND cs.user_id = ?))
       ORDER BY f.submitted_time DESC`,
       [recruiterId, user.id]
     );
 
     for (let submission of submissions) {
+      // DEBUG: Log session data being received
+      console.log(`📊 Submission ${submission.id}: session_id=${submission.session_id}, integrity_score=${submission.session_integrity_score}, applicant_id=${submission.applicant_id}, case_study_id=${submission.case_study_id}`);
+      if (submission.session_id !== null && submission.applicant_id !== null) {
+        console.log(`🔒 Session belongs to applicant ${submission.applicant_id}`);
+      } else if (submission.session_id !== null && submission.applicant_id === null) {
+        console.warn(`⚠️ Session ${submission.session_id} attached to submission ${submission.id} but submission has no applicant_id`);
+      }
+      
       // Use case_study_title_fallback if job_title is null (for assessments)
       if (!submission.job_title && submission.case_study_title_fallback) {
         submission.job_title = submission.case_study_title_fallback;
@@ -1287,6 +1771,16 @@ exports.getRecruiterSubmissions = async (req, res) => {
         if (typeof submission.psychometric_scores_ar === "string") {
           submission.psychometric_scores_ar = JSON.parse(submission.psychometric_scores_ar);
         }
+        // Parse custom question scores
+        if (typeof submission.custom_question_scores === "string") {
+          submission.custom_question_scores = JSON.parse(submission.custom_question_scores);
+        }
+        if (typeof submission.custom_question_scores_ar === "string") {
+          submission.custom_question_scores_ar = JSON.parse(submission.custom_question_scores_ar);
+        }
+        if (typeof submission.custom_answers === "string") {
+          submission.custom_answers = JSON.parse(submission.custom_answers);
+        }
         if (typeof submission.submission_method === "string") {
           submission.submission_method = JSON.parse(submission.submission_method);
         }
@@ -1296,12 +1790,34 @@ exports.getRecruiterSubmissions = async (req, res) => {
           hasQuestionScores: !!submission.question_scores?.length,
           hasSkillScores: !!submission.skill_scores?.length,
           hasPsychometricScores: !!submission.psychometric_scores?.length,
-          psychometricCount: Array.isArray(submission.psychometric_scores) ? submission.psychometric_scores.length : 0
+          hasCustomQuestionScores: !!submission.custom_question_scores?.length,
+          hasCustomAnswers: !!submission.custom_answers?.length,
+          customAnswers: submission.custom_answers,
+          psychometricCount: Array.isArray(submission.psychometric_scores) ? submission.psychometric_scores.length : 0,
+          customQuestionCount: Array.isArray(submission.custom_question_scores) ? submission.custom_question_scores.length : 0
         });
         
       } catch (e) {
         console.error("Error parsing JSON for submission", submission.id, e);
       }
+
+      // Build session object from joined session data - only if we have actual integrity data
+      submission.session = (submission.session_id !== null && submission.session_integrity_score !== null) ? {
+        id: submission.session_id,
+        integrityScore: parseFloat(submission.session_integrity_score),
+        warnings: submission.session_warnings_issued || 0,
+        timeSpent: submission.session_time_spent,
+        status: submission.session_status
+      } : null;
+      
+      console.log(`✅ Session object for ${submission.id}:`, submission.session);
+      
+      // Clean up raw session fields
+      delete submission.session_id;
+      delete submission.session_integrity_score;
+      delete submission.session_warnings_issued;
+      delete submission.session_time_spent;
+      delete submission.session_status;
 
       submission.requires_attention = submission.ai_detected || submission.score < 40;
     }
@@ -1502,6 +2018,125 @@ exports.getIncompleteCaseStudy = async (req, res) => {
       error: 'Failed to fetch case study status',
       details: err.message 
     });
+  }
+};
+
+/**
+ * Score a custom question in a feedback submission
+ * Updates the custom_question_scores JSON in the feedbacks table
+ * Also recalculates and updates the overall score
+ */
+exports.scoreCustomQuestion = async (req, res) => {
+  try {
+    const { feedbackId, questionId } = req.params;
+    const { score, feedback } = req.body;
+    
+    console.log(`📝 Scoring custom question: feedbackId=${feedbackId}, questionId=${questionId}, score=${score}`);
+    
+    if (score === undefined || score < 0 || score > 100) {
+      return res.status(400).json({ error: 'Score must be between 0 and 100' });
+    }
+    
+    // Get current feedback record including overall score data
+    const [feedbacks] = await db.query(
+      'SELECT custom_question_scores, custom_question_scores_ar, question_scores, score FROM feedbacks WHERE id = ?',
+      [feedbackId]
+    );
+    
+    if (feedbacks.length === 0) {
+      return res.status(404).json({ error: 'Feedback submission not found' });
+    }
+    
+    // Parse existing scores
+    let scores = [];
+    let scoresAr = [];
+    try {
+      scores = typeof feedbacks[0].custom_question_scores === 'string' 
+        ? JSON.parse(feedbacks[0].custom_question_scores) 
+        : (feedbacks[0].custom_question_scores || []);
+      scoresAr = typeof feedbacks[0].custom_question_scores_ar === 'string' 
+        ? JSON.parse(feedbacks[0].custom_question_scores_ar) 
+        : (feedbacks[0].custom_question_scores_ar || []);
+    } catch (e) {
+      scores = [];
+      scoresAr = [];
+    }
+    
+    // Update or add score for this question
+    const qIdNum = parseInt(questionId);
+    const existingIdx = scores.findIndex(s => s.question_id === qIdNum);
+    
+    const updatedScore = {
+      question_id: qIdNum,
+      question_type: existingIdx >= 0 ? scores[existingIdx].question_type : 'video',
+      score: parseInt(score),
+      feedback: feedback || '',
+      manual_scored: true,
+      scored_at: new Date().toISOString()
+    };
+    
+    if (existingIdx >= 0) {
+      scores[existingIdx] = { ...scores[existingIdx], ...updatedScore };
+      if (scoresAr[existingIdx]) {
+        scoresAr[existingIdx] = { ...scoresAr[existingIdx], ...updatedScore };
+      }
+    } else {
+      scores.push(updatedScore);
+      scoresAr.push(updatedScore);
+    }
+    
+    // Recalculate overall score including custom question scores
+    let newOverallScore = feedbacks[0].score || 0;
+    try {
+      // Parse question_scores (AI-scored questions)
+      let questionScores = [];
+      try {
+        questionScores = typeof feedbacks[0].question_scores === 'string'
+          ? JSON.parse(feedbacks[0].question_scores)
+          : (feedbacks[0].question_scores || []);
+      } catch (e) {
+        questionScores = [];
+      }
+      
+      // Calculate weighted average: AI questions + custom questions
+      const aiScoreSum = questionScores.reduce((sum, q) => sum + (q.score || 0), 0);
+      const aiCount = questionScores.length;
+      
+      const customScoreSum = scores.reduce((sum, q) => sum + (q.score || 0), 0);
+      const customCount = scores.filter(s => s.score !== undefined && s.score !== null).length;
+      
+      const totalQuestions = aiCount + customCount;
+      if (totalQuestions > 0) {
+        // Weight: AI questions get full weight, custom questions get proportional weight
+        newOverallScore = Math.round((aiScoreSum + customScoreSum) / totalQuestions);
+      }
+      
+      console.log(`📊 Score recalculation: AI avg=${aiCount > 0 ? aiScoreSum / aiCount : 0}, Custom avg=${customCount > 0 ? customScoreSum / customCount : 0}, New overall=${newOverallScore}`);
+    } catch (calcErr) {
+      console.error('⚠️ Error recalculating score, keeping original:', calcErr.message);
+    }
+    
+    // Update database with new scores AND recalculated overall score
+    await db.query(
+      'UPDATE feedbacks SET custom_question_scores = ?, custom_question_scores_ar = ?, score = ?, updated_at = NOW() WHERE id = ?',
+      [JSON.stringify(scores), JSON.stringify(scoresAr), newOverallScore, feedbackId]
+    );
+    
+    console.log(`✅ Custom question ${questionId} scored: ${score}/100, new overall score: ${newOverallScore}`);
+    
+    res.json({
+      success: true,
+      message: 'Score saved successfully',
+      data: { 
+        question_id: qIdNum, 
+        score: parseInt(score),
+        overall_score: newOverallScore
+      }
+    });
+    
+  } catch (err) {
+    console.error('❌ Error scoring custom question:', err);
+    res.status(500).json({ error: 'Failed to save score', details: err.message });
   }
 };
 

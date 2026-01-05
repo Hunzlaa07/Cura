@@ -24,6 +24,18 @@ module.exports = async (req, res, next) => {
     }
 
     req.user = users[0];
+    
+    // If user is an applicant, also get their applicant_profile id
+    if (req.user.user_type === 'applicant' || req.user.user_type === 'case_study_applicant') {
+      const [profiles] = await db.query(
+        'SELECT id FROM applicant_profiles WHERE user_id = ?',
+        [req.user.id]
+      );
+      if (profiles && profiles.length > 0) {
+        req.user.applicantId = profiles[0].id;
+      }
+    }
+    
     next();
 
   } catch (err) {

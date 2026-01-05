@@ -252,11 +252,12 @@ exports.updateApplicationStatus = async (req, res) => {
 
     const recruiterId = recruiterRows[0].id;
 
-    // Check if application belongs to recruiter's job
+    // Check if application belongs to recruiter's job and get applicant/job info
     const [appCheck] = await db.query(
-      `SELECT ja.id 
+      `SELECT ja.id, ja.job_id, ja.user_id, ap.id AS applicant_id
        FROM job_applications ja
        JOIN jobs j ON ja.job_id = j.id
+       LEFT JOIN applicant_profiles ap ON ap.user_id = ja.user_id
        WHERE ja.id = ? AND j.recruiter_id = ?`,
       [id, recruiterId]
     );
@@ -265,11 +266,38 @@ exports.updateApplicationStatus = async (req, res) => {
       return res.status(404).json({ error: "Application not found or unauthorized" });
     }
 
+    const { job_id, applicant_id } = appCheck[0];
+
     // Update status
     await db.query(
       'UPDATE job_applications SET status = ?, updated_at = NOW() WHERE id = ?',
       [status, id]
     );
+
+    // If marking as shortlisted, add to shortlists table
+    if (status === 'shortlisted') {
+      // Check if already shortlisted for this job
+      const [existing] = await db.query(
+        'SELECT id FROM shortlists WHERE recruiter_id = ? AND applicant_id = ? AND job_id = ?',
+        [recruiterId, applicant_id, job_id]
+      );
+
+      // Only insert if not already shortlisted
+      if (!existing || existing.length === 0) {
+        await db.query(
+          'INSERT INTO shortlists (recruiter_id, applicant_id, job_id, shortlisted_at) VALUES (?, ?, ?, NOW())',
+          [recruiterId, applicant_id, job_id]
+        );
+      }
+    }
+
+    // If marking as rejected or reviewed, remove from shortlists if exists
+    if (status === 'rejected' || status === 'reviewed') {
+      await db.query(
+        'DELETE FROM shortlists WHERE recruiter_id = ? AND applicant_id = ? AND job_id = ?',
+        [recruiterId, applicant_id, job_id]
+      );
+    }
 
     res.json({
       success: true,

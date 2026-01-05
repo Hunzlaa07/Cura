@@ -39,35 +39,64 @@ async function ensureArabicFields(data) {
 exports.getJobs = async (req, res) => {
   try {
     const lang = req.language || 'en'; // Set by languageMiddleware
+    const userId = req.user?.id; // Get logged-in user ID
+    
+    if (!userId) {
+      return res.status(401).json({ error: "Authentication required" });
+    }
+    
+    // Get the recruiter ID from the recruiters table using user_id
+    const [recruiterRows] = await pool.query(
+      'SELECT id FROM recruiter_profiles WHERE user_id = ?',
+      [userId]
+    );
+    
+    if (!recruiterRows.length) {
+      return res.status(200).json({ jobs: [], language: lang, total: 0 });
+    }
+    
+    const recruiterId = recruiterRows[0].id;
+    console.log('getJobs - userId:', userId, 'recruiterId:', recruiterId);
     
     const [rows] = await pool.query(
       `SELECT 
-        id,
-        recruiter_id,
-        ${lang === 'ar' ? 'COALESCE(title_ar, title)' : 'title'} as title,
-        ${lang === 'ar' ? 'COALESCE(description_ar, description)' : 'description'} as description,
-        ${lang === 'ar' ? 'COALESCE(key_responsibilities_ar, key_responsibilities)' : 'key_responsibilities'} as key_responsibilities,
-        ${lang === 'ar' ? 'COALESCE(department_ar, department)' : 'department'} as department,
-        ${lang === 'ar' ? 'COALESCE(location_ar, location)' : 'location'} as location,
-        employment_type,
-        experience_level,
-        min_experience_years,
-        max_experience_years,
-        status,
-        is_open,
-        share_link,
-        application_deadline,
-        created_at,
-        updated_at
-      FROM jobs 
-      WHERE status = 'active' AND is_open = 1
-      ORDER BY created_at DESC`
+        j.id,
+        j.recruiter_id,
+        ${lang === 'ar' ? 'COALESCE(j.title_ar, j.title)' : 'j.title'} as title,
+        ${lang === 'ar' ? 'COALESCE(j.description_ar, j.description)' : 'j.description'} as description,
+        ${lang === 'ar' ? 'COALESCE(j.key_responsibilities_ar, j.key_responsibilities)' : 'j.key_responsibilities'} as key_responsibilities,
+        ${lang === 'ar' ? 'COALESCE(j.department_ar, j.department)' : 'j.department'} as department,
+        ${lang === 'ar' ? 'COALESCE(j.location_ar, j.location)' : 'j.location'} as location,
+        j.employment_type,
+        j.experience_level,
+        j.min_experience_years,
+        j.max_experience_years,
+        j.status,
+        j.is_open,
+        j.share_link,
+        j.application_deadline,
+        j.created_at,
+        j.updated_at,
+        CASE WHEN cs.id IS NOT NULL THEN 1 ELSE 0 END as has_case_study
+      FROM jobs j
+      LEFT JOIN case_studies cs ON j.id = cs.job_id AND cs.is_active = 1
+      WHERE j.recruiter_id = ?
+      ORDER BY j.created_at DESC`,
+      [recruiterId]
     );
     
+    console.log('getJobs - found jobs:', rows.length);
+    
+    // Convert has_case_study to boolean
+    const jobsWithBoolean = rows.map(job => ({
+      ...job,
+      has_case_study: Boolean(job.has_case_study)
+    }));
+    
     res.status(200).json({ 
-      jobs: rows, 
+      jobs: jobsWithBoolean, 
       language: lang,
-      total: rows.length 
+      total: jobsWithBoolean.length 
     });
   } catch (err) {
     console.error(err);

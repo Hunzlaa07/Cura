@@ -22,6 +22,15 @@ const caseStudyRoutes = require('./routes/caseStudyRoutes');
 const assessmentsRoutes = require("./routes/assessmentsRoutes");
 const caseStudyInvitationRoutes = require('./routes/caseStudyInvitationRoutes');
 const caseStudyAssessmentRoutes = require('./routes/caseStudyAssessmentRoutes');
+const bulkCVRoutes = require('./routes/bulkCVRoutes');
+const googleDriveRoutes = require('./routes/googleDriveRoutes');
+const linkedinRoutes = require('./routes/linkedinRoutes');
+
+// New assessment feature routes
+const customQuestionsRoutes = require('./routes/customQuestionsRoutes');
+const assessmentModulesRoutes = require('./routes/assessmentModulesRoutes');
+const candidateResponsesRoutes = require('./routes/candidateResponsesRoutes');
+const preBuiltAssessmentsRoutes = require('./routes/preBuiltAssessmentsRoutes');
 
 const app = express();
 
@@ -69,8 +78,14 @@ app.use(morgan('dev'));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Static files (for uploads)
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+// Static files (for uploads) with CORP header to allow same-site embedding when needed
+const corpPolicy = process.env.CROSS_ORIGIN_RESOURCE_POLICY || 'same-site';
+app.use('/uploads', express.static(path.join(__dirname, 'uploads'), {
+  setHeaders: (res, filePath) => {
+    // Ensure video/image/static responses explicitly allow same-site embedding by default
+    res.setHeader('Cross-Origin-Resource-Policy', corpPolicy);
+  }
+}));
 
 // Cache control
 app.use((req, res, next) => {
@@ -88,6 +103,22 @@ app.use('/api/case-studies', caseStudyRoutes);
 app.use('/api/assessments', assessmentsRoutes);
 app.use('/api/case-study-invitations', caseStudyInvitationRoutes);
 app.use('/api/case-study-assessments', caseStudyAssessmentRoutes);
+
+// New assessment feature routes
+app.use('/api/custom-questions', customQuestionsRoutes);
+app.use('/api/assessment-modules', assessmentModulesRoutes);
+app.use('/api/candidate-responses', candidateResponsesRoutes);
+app.use('/api/pre-built-assessments', preBuiltAssessmentsRoutes);
+
+// Bulk CV routes (upload, status, export, import-from-link, google-drive)
+app.use('/api/bulk-cv', bulkCVRoutes);
+app.use('/api/bulk-cv', googleDriveRoutes);
+
+// LinkedIn integration routes
+app.use('/api/integrations', linkedinRoutes);
+// LinkedIn debug routes (protected)
+const linkedinRoutesDebug = require('./routes/linkedinRoutesDebug');
+app.use('/api/integrations', linkedinRoutesDebug);
 
 // Error handler (must be last)
 app.use(errorHandler);

@@ -61,8 +61,8 @@ router.put("/applications/:id/status", authMiddleware, jobAppController.updateAp
 // Download applicant resume
 router.get("/applications/:id/resume", authMiddleware, jobAppController.downloadResume);
 
-// ADD languageMiddleware to public jobs list
-router.get('/', languageMiddleware, jobController.getJobs);
+// ADD languageMiddleware and authMiddleware for authenticated job list
+router.get('/', authMiddleware, languageMiddleware, jobController.getJobs);
 
 // ADD languageMiddleware
 router.get('/:id', languageMiddleware, jobController.getJobById);
